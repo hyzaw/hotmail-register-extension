@@ -219,7 +219,33 @@ function getVisibleProfileSetupFields() {
     .filter((element, index, array) => element && isVisibleElement(element) && array.indexOf(element) === index);
 }
 
+function isAboutYouUrl(href = location.href) {
+  try {
+    const url = new URL(href, location.href);
+    return /\/about-you(?:\/|$)/i.test(url.pathname);
+  } catch {
+    return /\/about-you(?:\/|$)/i.test(String(href || ''));
+  }
+}
+
+function isAboutYouPageReady() {
+  if (!isAboutYouUrl(location.href)) {
+    return false;
+  }
+
+  const nameInput = queryFirstVisible('input[name="name"], input[autocomplete="name"], input[placeholder*="全名"]');
+  const birthdayField = getVisibleBirthdayDateField();
+  const hasBirthday = Boolean(birthdayField && (birthdayField.input || birthdayField.yearSegment));
+
+  return Boolean(nameInput && isVisibleElement(nameInput) && hasBirthday);
+}
+
 function isProfileSetupPageReady() {
+  // /about-you is a special profile step that can appear immediately after password submit.
+  if (isAboutYouPageReady()) {
+    return true;
+  }
+
   const pageText = getPageTextSnapshot();
   if (helpers.isLoginFlowUrl?.(location.href) || helpers.isLoginPasswordPageText(pageText)) {
     return false;
