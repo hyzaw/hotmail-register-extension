@@ -60,8 +60,8 @@ async function finalizeFromConsent({ addLog, checkAutoControl, executeSignupStep
   return result;
 }
 
-async function abandonAccountForAddPhone({ addLog, checkAutoControl, completeCurrentAccount, completionMessage = '单轮自动流程完成，当前邮箱已标记为已使用' } = {}) {
-  await addLog('步骤 8：检测到需要添加电话号码，当前账号将放弃并标记为已注册。');
+async function abandonAccountForAddPhone({ addLog, checkAutoControl, completeCurrentAccount, step = 8, completionMessage = '单轮自动流程完成，当前邮箱已标记为已使用' } = {}) {
+  await addLog(`步骤 ${step}：检测到需要添加电话号码，当前账号将放弃并标记为已注册。`);
   await checkAutoControl();
   const result = await completeCurrentAccount();
   await addLog(completionMessage);
@@ -84,6 +84,9 @@ async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSi
     await pollVerificationCode('login');
     await checkAutoControl();
     const loginCodeResult = await fillLastCode('login');
+    if (hasAddPhoneRequirement(loginCodeResult)) {
+      return { addPhoneRequired: true };
+    }
     if (hasReachedConsent(loginCodeResult)) {
       return { reachedConsent: true, needsProfileCompletion: false };
     }
@@ -163,6 +166,14 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
       pollVerificationCode,
       fillLastCode,
     });
+    if (loginResult?.addPhoneRequired) {
+      return abandonAccountForAddPhone({
+        addLog,
+        checkAutoControl,
+        completeCurrentAccount,
+        step: 7,
+      });
+    }
     if (loginResult?.reachedConsent) {
       return finalizeFromConsent({
         addLog,
@@ -190,6 +201,14 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
         await pollVerificationCode('login');
         await checkAutoControl();
         const recoveredLoginCodeResult = await fillLastCode('login');
+        if (hasAddPhoneRequirement(recoveredLoginCodeResult)) {
+          return abandonAccountForAddPhone({
+            addLog,
+            checkAutoControl,
+            completeCurrentAccount,
+            step: 7,
+          });
+        }
         if (hasReachedConsent(recoveredLoginCodeResult)) {
           return finalizeFromConsent({
             addLog,
@@ -260,6 +279,14 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
         await pollVerificationCode('login');
         await checkAutoControl();
         const recoveredLoginCodeResult = await fillLastCode('login');
+        if (hasAddPhoneRequirement(recoveredLoginCodeResult)) {
+          return abandonAccountForAddPhone({
+            addLog,
+            checkAutoControl,
+            completeCurrentAccount,
+            step: 7,
+          });
+        }
         if (hasReachedConsent(recoveredLoginCodeResult)) {
           return finalizeFromConsent({
             addLog,
@@ -275,6 +302,14 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
       await pollVerificationCode('login');
       await checkAutoControl();
       const loginCodeResult = await fillLastCode('login');
+      if (hasAddPhoneRequirement(loginCodeResult)) {
+        return abandonAccountForAddPhone({
+          addLog,
+          checkAutoControl,
+          completeCurrentAccount,
+          step: 7,
+        });
+      }
       if (hasReachedConsent(loginCodeResult)) {
         return finalizeFromConsent({
           addLog,
@@ -525,6 +560,15 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
         await pollVerificationCode('login');
         await checkAutoControl();
         const recoveredLoginCodeResult = await fillLastCode('login');
+        if (hasAddPhoneRequirement(recoveredLoginCodeResult)) {
+          return abandonAccountForAddPhone({
+            addLog,
+            checkAutoControl,
+            completeCurrentAccount,
+            step: 7,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
         if (hasReachedConsent(recoveredLoginCodeResult)) {
           return finalizeFromConsent({
             addLog,
@@ -541,6 +585,15 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
       await pollVerificationCode('login');
       await checkAutoControl();
       const loginCodeResult = await fillLastCode('login');
+      if (hasAddPhoneRequirement(loginCodeResult)) {
+        return abandonAccountForAddPhone({
+          addLog,
+          checkAutoControl,
+          completeCurrentAccount,
+          step: 7,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
       if (hasReachedConsent(loginCodeResult)) {
         return finalizeFromConsent({
           addLog,
@@ -559,6 +612,15 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
     await pollVerificationCode('login');
     await checkAutoControl();
     const loginCodeResult = await fillLastCode('login');
+    if (hasAddPhoneRequirement(loginCodeResult)) {
+      return abandonAccountForAddPhone({
+        addLog,
+        checkAutoControl,
+        completeCurrentAccount,
+        step: 7,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
     if (hasReachedConsent(loginCodeResult)) {
       return finalizeFromConsent({
         addLog,

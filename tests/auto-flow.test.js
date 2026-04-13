@@ -649,6 +649,64 @@ test('runSingleAutoFlow abandons account and marks completed when step 8 require
   ]);
 });
 
+test('runSingleAutoFlow abandons account when step 7 lands on add-phone after OTP submit', async () => {
+  const calls = [];
+
+  const result = await runSingleAutoFlow({
+    autoImport: false,
+    actions: {
+      async prepareNextAccount() { calls.push('prepareNextAccount'); },
+      async findCurrentEmailRecord() { calls.push('findCurrentEmailRecord'); },
+      async refreshOauthFromVps() { calls.push('refreshOauthFromVps'); },
+      async openOauthUrl() { calls.push('openOauthUrl'); },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+        if (step === 3) return { skipSignupVerification: true };
+        if (step === 6) return { needsOTP: true };
+      },
+      async pollVerificationCode(phase) {
+        calls.push(`pollVerificationCode:${phase}`);
+        return { code: '123456' };
+      },
+      async fillLastCode(phase) {
+        calls.push(`fillLastCode:${phase}`);
+        if (phase === 'login') {
+          return { addPhoneRequired: true };
+        }
+      },
+      async executeFinalVerifyStep() { calls.push('executeFinalVerifyStep'); },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) { calls.push(`log:${message}`); },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(calls.includes('executeFinalVerifyStep'), false);
+  assert.equal(calls.includes('executeSignupStep:8'), false);
+  assert.deepEqual(calls, [
+    'prepareNextAccount',
+    'log:单轮自动流程开始',
+    'log:阶段 1：刷新 CPA 并重新获取 OAuth 链接',
+    'refreshOauthFromVps',
+    'findCurrentEmailRecord',
+    'log:阶段 2：打开认证页面并进入注册流程',
+    'openOauthUrl',
+    'executeSignupStep:2',
+    'executeSignupStep:3',
+    'log:步骤 3：检测到当前邮箱已进入资料页，跳过注册码阶段',
+    'executeSignupStep:5',
+    'executeSignupStep:6',
+    'pollVerificationCode:login',
+    'fillLastCode:login',
+    'log:步骤 7：检测到需要添加电话号码，当前账号将放弃并标记为已注册。',
+    'completeCurrentAccount',
+    'log:单轮自动流程完成，当前邮箱已标记为已使用',
+  ]);
+});
+
 test('runSingleAutoFlow does not mark account completed when final verify fails', async () => {
   const calls = [];
 

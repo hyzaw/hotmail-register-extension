@@ -1195,6 +1195,9 @@ async function fillCode(payload) {
     await pauseForInteraction('afterPrimarySubmit');
   }
   const outcome = await waitForCodeSubmitOutcome(payload.step);
+  if (payload.step === 7 && isAddPhonePageReady()) {
+    return { ok: true, addPhoneRequired: true, url: location.href };
+  }
   if (payload.step === 4 || payload.step === 7) {
     if (isStep8Ready()) {
       return buildConsentReachedResult(outcome);
