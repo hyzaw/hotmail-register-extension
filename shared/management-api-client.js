@@ -72,18 +72,30 @@ export function createManagementApiClient({
     throw new Error('请先填写管理密钥');
   }
 
-  async function requestJson(endpointPath, { searchParams = {} } = {}) {
+  async function requestJson(endpointPath, {
+    method = 'GET',
+    searchParams = {},
+    body,
+  } = {}) {
     const requestUrl = buildManagementApiUrl(normalizedBaseUrl, endpointPath, searchParams);
     let response;
+    const normalizedMethod = String(method || 'GET').toUpperCase();
+    const headers = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${normalizedManagementKey}`,
+    };
+    const requestOptions = {
+      method: normalizedMethod,
+      headers,
+    };
+
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      requestOptions.body = JSON.stringify(body);
+    }
 
     try {
-      response = await fetchFn(requestUrl, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${normalizedManagementKey}`,
-        },
-      });
+      response = await fetchFn(requestUrl, requestOptions);
     } catch (error) {
       throw new Error(`管理 API 请求失败：${requestUrl} - ${error?.message || String(error)}`);
     }
@@ -132,6 +144,47 @@ export function createManagementApiClient({
       return {
         status: normalizeText(payload.status).toLowerCase(),
         error: normalizeText(payload.error),
+        raw: payload,
+      };
+    },
+    async submitOAuthCallback({
+      provider = 'codex',
+      redirectUrl = '',
+      state = '',
+      code = '',
+      error = '',
+    } = {}) {
+      const normalizedProvider = normalizeText(provider).toLowerCase();
+      const normalizedRedirectUrl = normalizeText(redirectUrl);
+      const normalizedState = normalizeText(state);
+      const normalizedCode = normalizeText(code);
+      const normalizedError = normalizeText(error);
+
+      if (!normalizedProvider) {
+        throw new Error('缺少 OAuth provider');
+      }
+      if (!normalizedRedirectUrl && !normalizedState) {
+        throw new Error('缺少 OAuth redirect_url 或 state');
+      }
+
+      const payload = await requestJson('v0/management/oauth-callback', {
+        method: 'POST',
+        body: {
+          provider: normalizedProvider,
+          ...(normalizedRedirectUrl ? { redirect_url: normalizedRedirectUrl } : {}),
+          ...(normalizedState ? { state: normalizedState } : {}),
+          ...(normalizedCode ? { code: normalizedCode } : {}),
+          ...(normalizedError ? { error: normalizedError } : {}),
+        },
+      });
+
+      const status = normalizeText(payload.status).toLowerCase();
+      if (status !== 'ok') {
+        throw new Error(`提交 OAuth 回调失败：${extractPayloadMessage(payload) || '管理 API 未返回成功状态'}`);
+      }
+
+      return {
+        status,
         raw: payload,
       };
     },

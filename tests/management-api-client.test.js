@@ -94,3 +94,48 @@ test('createManagementApiClient normalizes get-auth-status responses', async () 
     raw: { status: 'wait' },
   });
 });
+
+test('createManagementApiClient submits oauth callback with redirect_url and state', async () => {
+  const calls = [];
+  const client = createManagementApiClient({
+    baseUrl: 'http://localhost:8317',
+    managementKey: 'secret-key',
+    fetchFn: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({
+        status: 'ok',
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  const result = await client.submitOAuthCallback({
+    provider: 'codex',
+    redirectUrl: 'http://localhost:1455/auth/callback?code=abc&state=codex-123',
+    state: 'codex-123',
+  });
+
+  assert.deepEqual(result, {
+    status: 'ok',
+    raw: { status: 'ok' },
+  });
+
+  assert.deepEqual(calls, [{
+    url: 'http://localhost:8317/v0/management/oauth-callback',
+    options: {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: 'Bearer secret-key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        provider: 'codex',
+        redirect_url: 'http://localhost:1455/auth/callback?code=abc&state=codex-123',
+        state: 'codex-123',
+      }),
+    },
+  }]);
+});

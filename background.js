@@ -1323,7 +1323,8 @@ const handlers = {
 
     if (step === 8) {
       return runManagedStep(8, () => new Promise(async (resolve, reject) => {
-        let resolved = false;
+        let settled = false;
+        let callbackSubmitting = false;
         let webNavListener = null;
 
         const cleanupListener = () => {
@@ -1333,25 +1334,56 @@ const handlers = {
           }
         };
 
-        const finishStep8WithCallbackUrl = async (url) => {
-          const matchedUrl = findLoopbackCallbackUrl([url]);
-          if (!matchedUrl || resolved) return false;
-
-          resolved = true;
+        const rejectStep8 = async (error) => {
+          if (settled) return false;
+          settled = true;
           cleanupListener();
           clearTimeout(timeout);
-          await setRuntime({ localhostUrl: matchedUrl });
-          await setStepStatus(8, 'completed');
-          await addLog(`步骤 8：已捕获 localhost 回调 ${matchedUrl.slice(0, 80)}...`, 'ok');
-          resolve({ localhostUrl: matchedUrl });
+          await setStepStatus(8, 'failed');
+          reject(error);
           return true;
         };
 
+        const finishStep8WithCallbackUrl = async (url) => {
+          const matchedUrl = findLoopbackCallbackUrl([url]);
+          if (!matchedUrl || settled || callbackSubmitting) return false;
+
+          callbackSubmitting = true;
+          try {
+            const latestState = await getState();
+            const oauthState = String(
+              latestState.managementOauthState || state.managementOauthState || ''
+            ).trim();
+            if (!oauthState) {
+              throw new Error('步骤 8：缺少 OAuth state，无法向管理 API 提交回调。');
+            }
+
+            const client = buildManagementClient(latestState);
+            await client.submitOAuthCallback({
+              provider: 'codex',
+              redirectUrl: matchedUrl,
+              state: oauthState,
+            });
+
+            settled = true;
+            cleanupListener();
+            clearTimeout(timeout);
+            await setRuntime({ localhostUrl: matchedUrl });
+            await setStepStatus(8, 'completed');
+            await addLog(`步骤 8：已捕获 localhost 回调 ${matchedUrl.slice(0, 80)}...`, 'ok');
+            await addLog(`步骤 8：已向管理 API 提交 OAuth 回调，state=${oauthState}`, 'info');
+            resolve({ localhostUrl: matchedUrl });
+            return true;
+          } catch (error) {
+            await rejectStep8(error);
+            return false;
+          } finally {
+            callbackSubmitting = false;
+          }
+        };
+
         const timeout = setTimeout(async () => {
-          cleanupListener();
-          resolved = true;
-          await setStepStatus(8, 'failed');
-          reject(new Error('120 秒内未捕获到 localhost 回调跳转。'));
+          await rejectStep8(new Error('120 秒内未捕获到 localhost 回调跳转。'));
         }, 120000);
 
         webNavListener = (details) => {
@@ -1392,7 +1424,7 @@ const handlers = {
           } else {
             await addLog('步骤 8：已发送页面内点击，若未跳转将自动补发调试器点击...', 'info');
             setTimeout(() => {
-              if (!resolved && clickResult?.rect) {
+              if (!settled && clickResult?.rect) {
                 void clickWithDebugger(authTab.id, clickResult.rect)
                   .then(() => addLog('步骤 8：已补发调试器点击，继续等待跳转...', 'info'))
                   .catch(() => null);
@@ -1401,7 +1433,7 @@ const handlers = {
           }
 
           (async () => {
-            while (!resolved) {
+            while (!settled) {
               const tab = await chrome.tabs.get(authTab.id).catch(() => null);
               const matchedUrl = findLoopbackCallbackUrl([tab?.url || '']);
               if (matchedUrl) {
@@ -1411,16 +1443,10 @@ const handlers = {
               await new Promise((resume) => setTimeout(resume, 250));
             }
           })().catch(async (error) => {
-            if (!resolved) {
-              clearTimeout(timeout);
-              cleanupListener();
-              reject(error);
-            }
+            await rejectStep8(error);
           });
         } catch (error) {
-          clearTimeout(timeout);
-          cleanupListener();
-          reject(error);
+          await rejectStep8(error);
         }
       }), {
         startMessage: '步骤 8：正在确认 OAuth 同意页并准备点击继续...',
