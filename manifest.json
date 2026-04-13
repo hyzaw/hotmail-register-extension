@@ -12,6 +12,7 @@
   "permissions": [
     "sidePanel",
     "storage",
+    "browsingData",
     "tabs",
     "activeTab",
     "cookies",

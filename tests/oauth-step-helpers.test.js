@@ -51,6 +51,20 @@ test('shouldUseStep8ContinueButton requires consent context and no blocking page
   }), false);
 });
 
+test('getInteractionPacingProfile provides slower human-like pauses for key transitions', () => {
+  const profile = oauthStepHelpersModule.getInteractionPacingProfile?.();
+
+  assert.deepEqual(profile, {
+    afterTyping: [450, 900],
+    beforePrimaryClick: [350, 700],
+    afterPrimarySubmit: [1400, 2200],
+    betweenProfileFields: [250, 600],
+    beforeProfileSubmit: [600, 1100],
+    afterProfileSubmit: [1500, 2400],
+    afterLoginSwitch: [1200, 1800],
+  });
+});
+
 test('isSignupActionText only matches explicit signup actions', () => {
   assert.equal(isSignupActionText('Sign up'), true);
   assert.equal(isSignupActionText('创建账号'), true);
@@ -121,6 +135,13 @@ test('isSignupFlowUrl matches signup routes and hints only', () => {
   assert.equal(isSignupFlowUrl('https://auth.openai.com/u/login/identifier?screen_hint=signup'), true);
   assert.equal(isSignupFlowUrl('https://auth.openai.com/log-in'), false);
   assert.equal(isSignupFlowUrl('https://auth.openai.com/u/login/password?state=1'), false);
+});
+
+test('isDefinitiveSignupUrl only matches real signup routes, not login routes with signup hints', () => {
+  assert.equal(oauthStepHelpersModule.isDefinitiveSignupUrl?.('https://auth.openai.com/create-account'), true);
+  assert.equal(oauthStepHelpersModule.isDefinitiveSignupUrl?.('https://auth.openai.com/u/signup/identifier?state=1'), true);
+  assert.equal(oauthStepHelpersModule.isDefinitiveSignupUrl?.('https://auth.openai.com/u/login/identifier?screen_hint=signup'), false);
+  assert.equal(oauthStepHelpersModule.isDefinitiveSignupUrl?.('https://auth.openai.com/log-in'), false);
 });
 
 test('isLoginFlowUrl matches login routes only', () => {

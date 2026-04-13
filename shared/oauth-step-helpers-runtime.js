@@ -86,6 +86,16 @@
       || /signup/i.test(params.get('action') || '');
   }
 
+  function isDefinitiveSignupUrl(url) {
+    const parsed = parseUrl(url);
+    if (!parsed) {
+      return false;
+    }
+
+    const pathname = parsed.pathname || '';
+    return /\/u\/signup(?:[/?#]|$)|\/signup(?:[/?#]|$)|\/create-account(?:[/?#]|$)/i.test(pathname);
+  }
+
   function isLoginFlowUrl(url) {
     const parsed = parseUrl(url);
     if (!parsed) {
@@ -111,6 +121,18 @@
 
   function isStep8ActionText(text) {
     return /继续|continue|authorize|allow|同意|批准|approve|accept/i.test(normalizeInlineText(text));
+  }
+
+  function getInteractionPacingProfile() {
+    return {
+      afterTyping: [450, 900],
+      beforePrimaryClick: [350, 700],
+      afterPrimarySubmit: [1400, 2200],
+      betweenProfileFields: [250, 600],
+      beforeProfileSubmit: [600, 1100],
+      afterProfileSubmit: [1500, 2400],
+      afterLoginSwitch: [1200, 1800],
+    };
   }
 
   function isSignupActionText(text) {
@@ -139,7 +161,7 @@
     }
 
     const normalized = normalizeInlineText(text);
-    if (isSignupFlowUrl(url)) {
+    if (isDefinitiveSignupUrl(url)) {
       return true;
     }
 
@@ -239,9 +261,11 @@
     findStep9SuccessText,
     findStep9TimeoutText,
     buildRandomProfile,
+    getInteractionPacingProfile,
     isEmailVerificationUrl,
     isExistingAccountSignalText,
     isExplicitSignupFlowPageText,
+    isDefinitiveSignupUrl,
     isLoginFlowUrl,
     isSignupFlowUrl,
     isLoginPasswordPageText,

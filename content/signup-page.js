@@ -39,6 +39,16 @@ const SIGNUP_PASSWORD_RULE_PATTERN = /at\s+least\s+12\s+characters|your\s+passwo
 const STEP5_SUBMIT_ERROR_PATTERN = /无法根据该信息创建帐户|请重试|unable\s+to\s+create\s+(?:your\s+)?account|couldn'?t\s+create\s+(?:your\s+)?account|something\s+went\s+wrong|invalid\s+(?:birthday|birth|date)|生日|出生日期|年龄|age/i;
 const LOGIN_ACTION_PATTERN = /log\s*in|login|sign\s*in|已有账号.*登录|去登录|立即登录/i;
 
+function getInteractionPauseRange(key) {
+  const profile = helpers.getInteractionPacingProfile?.() || {};
+  return profile[key] || [250, 850];
+}
+
+async function pauseForInteraction(key) {
+  const [min, max] = getInteractionPauseRange(key);
+  await utils.humanPause(min, max);
+}
+
 function findOneTimeCodeLoginTrigger() {
   const candidates = document.querySelectorAll(
     'button, a, [role="button"], [role="link"], input[type="button"], input[type="submit"]'
@@ -224,7 +234,10 @@ function clearPendingSignupStep() {
 
 function isSignupLandingPageReady() {
   const pageText = getPageTextSnapshot();
-  if (!helpers.isSignupLandingPageText(pageText) || helpers.isLoginPasswordPageText(pageText)) {
+  if (!helpers.isSignupLandingPageText(pageText)) {
+    return false;
+  }
+  if (!helpers.isDefinitiveSignupUrl?.(location.href) && helpers.isLoginPasswordPageText(pageText)) {
     return false;
   }
 
@@ -245,7 +258,7 @@ function isSignupIdentifierPageReady() {
   }
 
   const pageText = getPageTextSnapshot();
-  if (helpers.isLoginPasswordPageText(pageText)) {
+  if (!helpers.isDefinitiveSignupUrl?.(location.href) && helpers.isLoginPasswordPageText(pageText)) {
     return false;
   }
 
@@ -320,6 +333,9 @@ async function switchStep3ToLoginFlow(payload, source = 'direct') {
 async function detectExistingAccountLoginFlow(payload, timeout = 8000) {
   const pageText = getPageTextSnapshot();
   const loginAction = findLoginAction();
+  if (helpers.isDefinitiveSignupUrl?.(location.href)) {
+    return null;
+  }
   const loginFlowStateSummary = helpers.describeStep3LoginFlowState?.({
     url: location.href,
     text: pageText,
@@ -363,6 +379,9 @@ async function detectExistingAccountLoginFlow(payload, timeout = 8000) {
 }
 
 async function recoverSignupFlowFromLoginPage(timeout = 8000) {
+  if (helpers.isDefinitiveSignupUrl?.(location.href)) {
+    return isSignupIdentifierPageReady() || isSignupPasswordCreationPageReady();
+  }
   if (!helpers.isLoginFlowUrl?.(location.href) && !helpers.isLoginPasswordPageText(getPageTextSnapshot())) {
     return false;
   }
@@ -535,9 +554,10 @@ async function finishStep3OnPasswordPage(payload) {
       phase: 'submitted',
       startedAt: Date.now(),
     });
+    await pauseForInteraction('beforePrimaryClick');
     utils.clickElement(submitButton);
     utils.log('步骤 3：注册表单已提交，等待页面继续...');
-    await utils.sleep(500);
+    await pauseForInteraction('afterPrimarySubmit');
     const passwordErrorText = getSignupPasswordValidationErrorText();
     if (isSignupPasswordCreationPageReady() && passwordErrorText) {
       clearPendingSignupStep();
@@ -602,6 +622,7 @@ async function step3FillCredentials(payload) {
   const emailInput = await utils.waitForElement('input[type="email"], input[name="email"]');
   utils.setInputValue(emailInput, payload.address);
   utils.log('步骤 3：邮箱已填写');
+  await pauseForInteraction('afterTyping');
 
   const directPasswordInput = helpers.getPasswordInput();
   if (directPasswordInput && isVisibleElement(directPasswordInput) && isSignupPasswordCreationPageReady()) {
@@ -615,9 +636,10 @@ async function step3FillCredentials(payload) {
       payload,
       startedAt: Date.now(),
     });
+    await pauseForInteraction('beforePrimaryClick');
     utils.clickElement(continueButton);
     utils.log('步骤 3：邮箱已提交，正在等待密码输入框...');
-    await utils.sleep(800);
+    await pauseForInteraction('afterPrimarySubmit');
   }
 
   const loginFlowAfterEmailSubmitResult = await detectExistingAccountLoginFlow(payload);
@@ -694,11 +716,13 @@ async function step6Login(payload) {
     15000
   );
   utils.setInputValue(emailInput, address);
+  await pauseForInteraction('afterTyping');
 
   const submitButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
   if (submitButton) {
+    await pauseForInteraction('beforePrimaryClick');
     utils.clickElement(submitButton);
-    await utils.sleep(1200);
+    await pauseForInteraction('afterLoginSwitch');
   }
 
   const startedAt = Date.now();
@@ -729,8 +753,9 @@ async function step6Login(payload) {
     if (path === 'one_time_code' && !oneTimeCodeAttempted && oneTimeCodeTrigger) {
       oneTimeCodeAttempted = true;
       utils.log('步骤 6：检测到一次性验证码登录入口，优先切换...', 'info');
+      await pauseForInteraction('beforePrimaryClick');
       utils.clickElement(oneTimeCodeTrigger);
-      await utils.sleep(1200);
+      await pauseForInteraction('afterLoginSwitch');
       continue;
     }
     if (path === 'password') {
@@ -750,9 +775,12 @@ async function step6Login(payload) {
     const resolvedPassword = loginPassword || password || '';
     utils.log('步骤 6：检测到密码输入框，正在使用默认登录密码...');
     utils.setInputValue(passwordInput, resolvedPassword);
+    await pauseForInteraction('afterTyping');
     const submitPasswordButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
     if (submitPasswordButton) {
+      await pauseForInteraction('beforePrimaryClick');
       utils.clickElement(submitPasswordButton);
+      await pauseForInteraction('afterPrimarySubmit');
     }
 
     const waitAfterPasswordStartedAt = Date.now();
@@ -934,6 +962,7 @@ async function step5FillProfile() {
   } else {
     throw new Error(`步骤 5：未找到可填写的姓名字段。URL: ${location.href}`);
   }
+  await pauseForInteraction('betweenProfileFields');
 
   if (ageInput && isVisibleElement(ageInput)) {
     utils.setInputValue(ageInput, profile.age);
@@ -952,8 +981,10 @@ async function step5FillProfile() {
     throw new Error(`步骤 5：未找到资料页提交按钮。URL: ${location.href}`);
   }
 
+  await pauseForInteraction('beforeProfileSubmit');
   utils.clickElement(submitButton);
   utils.log('步骤 5：资料已提交，正在等待页面结果...');
+  await pauseForInteraction('afterProfileSubmit');
 
   const outcome = await waitForStep5SubmitOutcome();
   if (outcome.invalidProfile) {

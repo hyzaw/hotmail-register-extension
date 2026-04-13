@@ -9,6 +9,7 @@ import {
 import { continueSingleAutoFlow, runAutoFlowBatch, runSingleAutoFlow } from './shared/auto-flow.js';
 import { createAutoRunPausedError } from './shared/auto-run-control.js';
 import { buildAutoRestartRuntimeUpdates } from './shared/auto-restart.js';
+import { getAuthBrowsingDataOptions, getAuthBrowsingDataRemovals } from './shared/auth-browsing-data.js';
 import { getConsumedMessageIds, markVerificationMailConsumed } from './shared/consumed-mail-ledger.js';
 import { createInternalSessionClient } from './shared/internal-session-client.js';
 import { createLuckmailClient } from './shared/luckmail-client.js';
@@ -282,6 +283,18 @@ function buildClient(settings) {
   });
 }
 
+async function resetAuthAttemptRuntime() {
+  await setRuntime({
+    authTabId: null,
+    managementOauthState: '',
+    localhostUrl: '',
+    lastSignupCode: '',
+    lastLoginCode: '',
+    lastSignupMail: null,
+    lastLoginMail: null,
+  });
+}
+
 function buildManagementClient(settings) {
   return createManagementApiClient({
     baseUrl: settings.vpsUrl,
@@ -533,6 +546,24 @@ async function closeAuthTabs() {
   }
   await chrome.tabs.remove(authTabIds).catch(() => {});
   return authTabIds.length;
+}
+
+async function clearAuthBrowsingData() {
+  if (!chrome.browsingData?.remove) {
+    throw new Error('当前浏览器不支持 browsingData API。');
+  }
+
+  await chrome.browsingData.remove(
+    getAuthBrowsingDataOptions(),
+    getAuthBrowsingDataRemovals()
+  );
+}
+
+async function resetAuthEnvironmentForNextAccount() {
+  const closedAuthTabs = await closeAuthTabs();
+  await resetAuthAttemptRuntime();
+  await clearAuthBrowsingData();
+  return { closedAuthTabs };
 }
 
 async function openOrReusePanelTab(source, url, files, options = {}) {
@@ -983,6 +1014,12 @@ const handlers = {
       }
       throw new Error('没有更多未注册邮箱可用');
     }
+    await addLog('准备账号：正在清理 OpenAI 认证相关 Cookie / 缓存 / 存储数据...', 'info');
+    const cleanupResult = await resetAuthEnvironmentForNextAccount();
+    if (cleanupResult.closedAuthTabs) {
+      await addLog(`准备账号：已关闭 ${cleanupResult.closedAuthTabs} 个旧认证页标签`, 'info');
+    }
+    await addLog('准备账号：已清理 OpenAI 认证环境。', 'ok');
     await setRuntime({
       currentAccount: match,
       currentAccountIndex: selection.index,
@@ -1004,6 +1041,12 @@ const handlers = {
     if (!nextAccount?.address) {
       throw new Error('没有更多未注册邮箱可用');
     }
+    await addLog('切换账号：正在清理 OpenAI 认证相关 Cookie / 缓存 / 存储数据...', 'info');
+    const cleanupResult = await resetAuthEnvironmentForNextAccount();
+    if (cleanupResult.closedAuthTabs) {
+      await addLog(`切换账号：已关闭 ${cleanupResult.closedAuthTabs} 个旧认证页标签`, 'info');
+    }
+    await addLog('切换账号：已清理 OpenAI 认证环境。', 'ok');
     await setRuntime({
       selectedAccountAddress: '',
       currentAccountIndex: selection.index,
