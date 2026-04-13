@@ -1381,6 +1381,68 @@ async function step5FillProfile() {
     return buildConsentReachedResult();
   }
 
+  const clearAndFillInputValue = async (input, value, { verify = null, attempts = 3 } = {}) => {
+    if (!input) return false;
+    const desired = String(value ?? '');
+
+    const tryExecCommandInsert = () => {
+      try {
+        input.focus?.();
+        if (typeof input.setSelectionRange === 'function') {
+          const len = String(input.value || '').length;
+          input.setSelectionRange(0, len);
+        }
+        // This often triggers React onChange for masked inputs better than direct value assignment.
+        document.execCommand?.('insertText', false, desired);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        input.focus?.();
+      } catch {}
+
+      // Hard clear first.
+      try {
+        utils.setInputValue(input, '');
+      } catch {}
+      try {
+        if (typeof input.setSelectionRange === 'function') {
+          input.setSelectionRange(0, 0);
+        }
+      } catch {}
+      await utils.sleep(60);
+
+      // Fill desired value.
+      try {
+        utils.setInputValue(input, desired);
+      } catch {}
+      await utils.sleep(60);
+
+      // Some inputs ignore programmatic value set; fallback to execCommand typing.
+      if (verify && !verify(String(input.value || ''))) {
+        tryExecCommandInsert();
+        await utils.sleep(80);
+      }
+
+      try {
+        input.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+      } catch {}
+      await utils.sleep(60);
+
+      if (!verify || verify(String(input.value || ''))) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   const resolveBirthdayParts = (rawBirthday) => {
     const fallback = { year: '2000', month: '01', day: '01' };
     const value = String(rawBirthday || '').trim();
@@ -1410,7 +1472,8 @@ async function step5FillProfile() {
     singleNameInput = document.querySelector('input[name="name"], input[placeholder*="全名"], input[autocomplete="name"]');
     firstNameInput = document.querySelector('input[name="first_name"], input[autocomplete="given-name"]');
     lastNameInput = document.querySelector('input[name="last_name"], input[autocomplete="family-name"]');
-    ageInput = document.querySelector('input[name="age"], input[placeholder*="年龄"], input[aria-label*="年龄"], input[inputmode="numeric"], input[type="number"]');
+    // Only treat explicit age fields as age inputs. Avoid catching birthday inputs that use numeric inputmode.
+    ageInput = document.querySelector('input[name="age"], input[name=\"age\"][type=\"number\"], input[placeholder*=\"年龄\"], input[aria-label*=\"年龄\"], input[placeholder*=\"Age\"], input[aria-label*=\"Age\"]');
     birthdayField = getVisibleBirthdayDateField();
 
     const hasNameField = Boolean(
@@ -1429,11 +1492,11 @@ async function step5FillProfile() {
   }
 
   if (singleNameInput && isVisibleElement(singleNameInput)) {
-    utils.setInputValue(singleNameInput, profile.fullName);
+    await clearAndFillInputValue(singleNameInput, profile.fullName);
     utils.log(`步骤 5：姓名已填写：${profile.fullName}`);
   } else if ((firstNameInput && isVisibleElement(firstNameInput)) && (lastNameInput && isVisibleElement(lastNameInput))) {
-    utils.setInputValue(firstNameInput, profile.firstName);
-    utils.setInputValue(lastNameInput, profile.lastName);
+    await clearAndFillInputValue(firstNameInput, profile.firstName);
+    await clearAndFillInputValue(lastNameInput, profile.lastName);
     utils.log(`步骤 5：姓名已填写：${profile.fullName}`);
   } else {
     throw new Error(`步骤 5：未找到可填写的姓名字段。URL: ${location.href}`);
@@ -1441,7 +1504,7 @@ async function step5FillProfile() {
   await pauseForInteraction('betweenProfileFields');
 
   if (ageInput && isVisibleElement(ageInput)) {
-    utils.setInputValue(ageInput, profile.age);
+    await clearAndFillInputValue(ageInput, profile.age);
     utils.log(`步骤 5：年龄已填写：${profile.age}`);
   } else if (birthdayField?.mode === 'segments') {
     const { year, month, day } = resolveBirthdayParts(profile.birthday);
@@ -1454,9 +1517,7 @@ async function step5FillProfile() {
     if (hiddenBirthday) {
       try {
         await utils.sleep(100);
-        if (!String(hiddenBirthday.value || '').trim()) {
-          utils.setInputValue(hiddenBirthday, `${year}-${month}-${day}`);
-        }
+        utils.setInputValue(hiddenBirthday, `${year}-${month}-${day}`);
       } catch {}
     }
     utils.log(`步骤 5：生日已填写：${profile.birthday}`);
@@ -1467,10 +1528,11 @@ async function step5FillProfile() {
       ? `${year}-${month}-${day}`
       : `${year}/${month}/${day}`;
 
-    utils.setInputValue(birthdayField.input, visibleValue);
-    try {
-      birthdayField.input.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
-    } catch {}
+    const verifyBirthdayYear = (rawValue) => {
+      const digits = String(rawValue || '').replace(/[^\d]/g, '');
+      return digits.startsWith(year);
+    };
+    await clearAndFillInputValue(birthdayField.input, visibleValue, { verify: verifyBirthdayYear, attempts: 4 });
 
     // Some layouts also include a hidden birthday input in the form; keep it in ISO to satisfy backends.
     const hiddenBirthday = document.querySelector('input[name="birthday"][type="hidden"]');
