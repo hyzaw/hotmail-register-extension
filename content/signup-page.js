@@ -439,6 +439,23 @@ function isExplicitVisibleSignupFlowPageReady() {
     || isSignupPasswordCreationPageReady();
 }
 
+function findSignupEntryAction() {
+  const candidates = document.querySelectorAll(
+    'a[href], button, [role="button"], [role="link"], input[type="button"], input[type="submit"], span'
+  );
+
+  return Array.from(candidates).find((element) => {
+    if (!isVisibleElement(element)) return false;
+    const actionText = getActionText(element);
+    if (!helpers.isSignupActionText(actionText)) return false;
+
+    const clickable = element.closest?.('a[href], button, [role="button"], [role="link"], input[type="button"], input[type="submit"]')
+      || element;
+    if (!isActionEnabled(clickable)) return false;
+    return true;
+  }) || null;
+}
+
 function getPrimaryContinueButton() {
   const actionCandidates = document.querySelectorAll('button, [role="button"], input[type="submit"]');
   const consentUrl = helpers.isOAuthConsentUrl(location.href);
@@ -484,53 +501,47 @@ async function step2OpenSignup() {
   }
 
   utils.log('步骤 2：正在查找注册入口...');
-
-  const candidates = document.querySelectorAll(
-    'a[href*="signup"], a[href*="register"], button[data-testid*="signup"], button, a, [role="button"], [role="link"]'
-  );
-
-  const button = Array.from(candidates).find((element) => {
-    if (!isVisibleElement(element)) return false;
-    const actionText = getActionText(element);
-    if (!helpers.isSignupActionText(actionText)) return false;
-
-    const href = element.getAttribute?.('href') || '';
-    return /signup|register/i.test(href) || helpers.isSignupActionText(actionText);
-  }) || null;
-
-  if (button) {
-    const startedAt = Date.now();
-    let clickAttempts = 0;
-    while (Date.now() - startedAt < 8000) {
-      if (isExplicitVisibleSignupFlowPageReady()) {
-        clearPendingSignupStep();
-        utils.log('步骤 2：已确认进入真实注册页。', 'ok');
-        utils.reportComplete(2, { enteredSignup: true });
-        return { ok: true };
-      }
-
-      const currentButton = Array.from(document.querySelectorAll(
-        'a[href*="signup"], a[href*="register"], button[data-testid*="signup"], button, a, [role="button"], [role="link"]'
-      )).find((element) => {
-        if (!isVisibleElement(element)) return false;
-        if (!isActionEnabled(element)) return false;
-        const actionText = getActionText(element);
-        if (!helpers.isSignupActionText(actionText)) return false;
-        const href = element.getAttribute?.('href') || '';
-        return /signup|register/i.test(href) || helpers.isSignupActionText(actionText);
-      });
-
-      if (currentButton && clickAttempts < 3) {
-        writePendingSignupStep({ step: 2, startedAt: Date.now() });
-        utils.clickElement(currentButton);
-        clickAttempts += 1;
-        utils.log(`步骤 2：已点击注册入口，正在等待注册页加载（第 ${clickAttempts} 次）...`);
-      }
-
-      await utils.sleep(1200);
+  const startedAt = Date.now();
+  let clickAttempts = 0;
+  let redirectAttempted = false;
+  while (Date.now() - startedAt < 8000) {
+    if (isExplicitVisibleSignupFlowPageReady()) {
+      clearPendingSignupStep();
+      utils.log('步骤 2：已确认进入真实注册页。', 'ok');
+      utils.reportComplete(2, { enteredSignup: true });
+      return { ok: true };
     }
 
-    throw new Error(`已点击注册入口，但页面仍未进入真正的注册页。URL: ${location.href}`);
+    const currentButton = findSignupEntryAction();
+    const clickable = currentButton?.closest?.('a[href], button, [role="button"], [role="link"], input[type="button"], input[type="submit"]')
+      || currentButton;
+    if (clickable && clickAttempts < 3) {
+      writePendingSignupStep({ step: 2, startedAt: Date.now() });
+      await pauseForInteraction('beforePrimaryClick');
+      utils.clickElement(clickable);
+      clickAttempts += 1;
+      utils.log(`步骤 2：已点击注册入口，正在等待注册页加载（第 ${clickAttempts} 次）...`);
+      await utils.sleep(1200);
+      continue;
+    }
+
+    if (!redirectAttempted && helpers.isLoginFlowUrl?.(location.href)) {
+      const signupUrl = helpers.buildSignupTransitionUrl?.(location.href) || '';
+      if (signupUrl && signupUrl !== location.href) {
+        redirectAttempted = true;
+        writePendingSignupStep({ step: 2, startedAt: Date.now() });
+        utils.log(`步骤 2：当前仍停留登录页，直接跳转到注册地址：${signupUrl}`, 'warn');
+        location.assign(signupUrl);
+        await utils.sleep(1500);
+        continue;
+      }
+    }
+
+    await utils.sleep(400);
+  }
+
+  if (helpers.isLoginFlowUrl?.(location.href)) {
+    throw new Error(`已识别到登录页，但未能切换到注册页。URL: ${location.href}`);
   }
 
   if ((emailInput || passwordInput) && !isExplicitVisibleSignupFlowPageReady()) {

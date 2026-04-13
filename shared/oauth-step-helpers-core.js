@@ -109,6 +109,30 @@ export function isLoginFlowUrl(url) {
     || /login/i.test(params.get('action') || '');
 }
 
+export function buildSignupTransitionUrl(url) {
+  const parsed = parseUrl(url);
+  if (!parsed) {
+    return '';
+  }
+
+  const next = new URL(parsed.toString());
+  const pathname = next.pathname || '';
+  if (/^\/u\/login(?:\/|$)/i.test(pathname)) {
+    next.pathname = pathname.replace(/^\/u\/login/i, '/u/signup');
+    return next.toString();
+  }
+  if (/^\/log-in(?:\/|$)/i.test(pathname)) {
+    next.pathname = pathname.replace(/^\/log-in/i, '/create-account');
+    return next.toString();
+  }
+  if (isLoginFlowUrl(url)) {
+    next.searchParams.set('screen_hint', 'signup');
+    return next.toString();
+  }
+
+  return '';
+}
+
 export function isEmailVerificationUrl(url) {
   const parsed = parseUrl(url);
   if (!parsed) {
@@ -260,6 +284,7 @@ export const oauthStepHelpers = {
   findStep9SuccessText,
   findStep9TimeoutText,
   buildRandomProfile,
+  buildSignupTransitionUrl,
   getInteractionPacingProfile,
   isEmailVerificationUrl,
   isExistingAccountSignalText,

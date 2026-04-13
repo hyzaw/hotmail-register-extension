@@ -151,6 +151,17 @@ test('isLoginFlowUrl matches login routes only', () => {
   assert.equal(isLoginFlowUrl('https://auth.openai.com/create-account/password?state=1'), false);
 });
 
+test('buildSignupTransitionUrl converts login routes into matching signup routes', () => {
+  assert.equal(
+    oauthStepHelpersModule.buildSignupTransitionUrl?.('https://auth.openai.com/log-in'),
+    'https://auth.openai.com/create-account'
+  );
+  assert.equal(
+    oauthStepHelpersModule.buildSignupTransitionUrl?.('https://auth.openai.com/u/login/identifier?state=1'),
+    'https://auth.openai.com/u/signup/identifier?state=1'
+  );
+});
+
 test('isEmailVerificationUrl matches verification routes only', () => {
   assert.equal(isEmailVerificationUrl('https://auth.openai.com/email-verification'), true);
   assert.equal(isEmailVerificationUrl('https://auth.openai.com/u/login/email-verification?state=1'), true);
