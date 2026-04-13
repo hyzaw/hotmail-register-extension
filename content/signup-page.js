@@ -1181,25 +1181,9 @@ async function step8FindAndClick() {
       continueButton.focus?.();
       await utils.sleep(250);
       const rect = continueButton.getBoundingClientRect();
-      let nativeClicked = false;
-      const clickTarget = continueButton;
-      setTimeout(() => {
-        try {
-          utils.clickElement(clickTarget);
-          const form = clickTarget.form || clickTarget.closest?.('form') || null;
-          if (form && typeof form.requestSubmit === 'function') {
-            form.requestSubmit(clickTarget);
-          }
-        } catch {
-          try {
-            clickTarget.click?.();
-          } catch {}
-        }
-      }, 0);
-      nativeClicked = true;
       return {
         ok: true,
-        clicked: nativeClicked,
+        clicked: false,
         buttonText: getActionText(continueButton),
         rect: {
           left: rect.left,

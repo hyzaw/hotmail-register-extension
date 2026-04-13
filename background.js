@@ -1393,9 +1393,11 @@ const handlers = {
         try {
           await addLog('步骤 8：正在监听 localhost 回调链接并准备直传管理端...', 'info');
           const authTab = await getActiveAuthTab();
-          const clickResult = await chrome.tabs.sendMessage(authTab.id, {
+          const clickResult = await sendToTab(authTab.id, {
             type: 'STEP8_FIND_AND_CLICK',
             payload: {},
+          }, {
+            timeoutMs: 30000,
           });
 
           if (clickResult?.error) {
@@ -1412,6 +1414,7 @@ const handlers = {
           }
 
           if (clickPlan === 'debugger_only') {
+            await addLog('步骤 8：已定位继续按钮，准备执行调试器点击...', 'info');
             await clickWithDebugger(authTab.id, clickResult.rect);
             await addLog('步骤 8：已发送调试器点击，正在等待跳转...', 'info');
           } else if (clickPlan === 'native_only') {
