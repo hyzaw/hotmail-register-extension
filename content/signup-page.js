@@ -262,21 +262,27 @@ function queryFirstVisible(selector) {
     .find((element) => element && isVisibleElement(element)) || null;
 }
 
-function getVisibleBirthdayDateField() {
-  const dateInput = queryFirstVisible('input[type="date"]');
+function queryFirstVisibleWithin(root, selector) {
+  const scope = root || document;
+  return Array.from(scope.querySelectorAll(selector))
+    .find((element) => element && isVisibleElement(element)) || null;
+}
+
+function getVisibleBirthdayDateField(root = document) {
+  const dateInput = queryFirstVisibleWithin(root, 'input[type="date"]');
   if (dateInput) {
     return { mode: 'date_input', input: dateInput };
   }
 
-  const yearSegment = queryFirstVisible('[role="spinbutton"][data-type="year"][contenteditable="true"]');
-  const monthSegment = queryFirstVisible('[role="spinbutton"][data-type="month"][contenteditable="true"]');
-  const daySegment = queryFirstVisible('[role="spinbutton"][data-type="day"][contenteditable="true"]');
+  const yearSegment = queryFirstVisibleWithin(root, '[role="spinbutton"][data-type="year"][contenteditable="true"]');
+  const monthSegment = queryFirstVisibleWithin(root, '[role="spinbutton"][data-type="month"][contenteditable="true"]');
+  const daySegment = queryFirstVisibleWithin(root, '[role="spinbutton"][data-type="day"][contenteditable="true"]');
   if (yearSegment && monthSegment && daySegment) {
     return { mode: 'segments', yearSegment, monthSegment, daySegment };
   }
 
   // Some variants keep a visible text input for birthday.
-  const birthdayTextInput = queryFirstVisible('input[name="birthday"]:not([type="hidden"])');
+  const birthdayTextInput = queryFirstVisibleWithin(root, 'input[name="birthday"]:not([type="hidden"])');
   if (birthdayTextInput) {
     return { mode: 'birthday_input', input: birthdayTextInput };
   }
@@ -1469,6 +1475,44 @@ async function step5FillProfile() {
     return false;
   };
 
+  const readSpinbuttonDigits = (segment) => {
+    if (!segment) return '';
+    const textDigits = String(segment.textContent || '').replace(/[^\d]/g, '');
+    if (textDigits) return textDigits;
+    const ariaNow = String(segment.getAttribute?.('aria-valuenow') || '').replace(/[^\d]/g, '');
+    // aria-valuenow can be non-empty even for placeholders; only use it when it looks like a real value.
+    if (ariaNow && ariaNow.length >= 1) return ariaNow;
+    return '';
+  };
+
+  const fillBirthdaySegmentsWithVerify = async ({ yearSegment, monthSegment, daySegment }, { year, month, day }) => {
+    const expectedYear = String(year);
+    const expectedMonth = String(Number(month));
+    const expectedDay = String(Number(day));
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      fillContentEditableSegment(yearSegment, '');
+      fillContentEditableSegment(monthSegment, '');
+      fillContentEditableSegment(daySegment, '');
+      await utils.sleep(60);
+
+      fillContentEditableSegment(yearSegment, expectedYear);
+      fillContentEditableSegment(monthSegment, expectedMonth);
+      fillContentEditableSegment(daySegment, expectedDay);
+      await utils.sleep(120);
+
+      const gotYearDigits = readSpinbuttonDigits(yearSegment);
+      const gotYear = gotYearDigits.length >= 4 ? gotYearDigits.slice(-4) : gotYearDigits;
+      if (gotYear === expectedYear) {
+        return true;
+      }
+      utils.log(`步骤 5：生日填写未生效，正在重试（${attempt}/4）。当前 year=${gotYearDigits || '(empty)'}, 期望=${expectedYear}`, 'warn');
+      await utils.sleep(120);
+    }
+
+    return false;
+  };
+
   const resolveBirthdayParts = (rawBirthday) => {
     const fallback = { year: '2000', month: '01', day: '01' };
     const value = String(rawBirthday || '').trim();
@@ -1517,6 +1561,17 @@ async function step5FillProfile() {
     await utils.sleep(200);
   }
 
+  // Re-scope birthday detection to the form containing the visible name field when possible.
+  const formRoot = (
+    singleNameInput?.closest?.('form')
+    || firstNameInput?.closest?.('form')
+    || lastNameInput?.closest?.('form')
+    || birthdayField?.input?.closest?.('form')
+    || birthdayField?.yearSegment?.closest?.('form')
+    || null
+  ) || document;
+  birthdayField = getVisibleBirthdayDateField(formRoot) || birthdayField;
+
   if (singleNameInput && isVisibleElement(singleNameInput)) {
     await clearAndFillInputValue(singleNameInput, profile.fullName);
     utils.log(`步骤 5：姓名已填写：${profile.fullName}`);
@@ -1534,12 +1589,13 @@ async function step5FillProfile() {
     utils.log(`步骤 5：年龄已填写：${profile.age}`);
   } else if (birthdayField?.mode === 'segments') {
     const { year, month, day } = resolveBirthdayParts(profile.birthday);
-    fillContentEditableSegment(birthdayField.yearSegment, year);
-    fillContentEditableSegment(birthdayField.monthSegment, String(Number(month)));
-    fillContentEditableSegment(birthdayField.daySegment, String(Number(day)));
+    const ok = await fillBirthdaySegmentsWithVerify(birthdayField, { year, month, day });
+    if (!ok) {
+      throw new Error(`步骤 5：生日字段填写后未生效（仍显示非目标年份）。URL: ${location.href}`);
+    }
 
     // If the hidden field exists but stays empty, fall back to setting it just before submit.
-    const hiddenBirthday = document.querySelector('input[name="birthday"][type="hidden"]');
+    const hiddenBirthday = formRoot.querySelector?.('input[name="birthday"][type="hidden"]') || document.querySelector('input[name="birthday"][type="hidden"]');
     if (hiddenBirthday) {
       try {
         await utils.sleep(100);
@@ -1558,10 +1614,13 @@ async function step5FillProfile() {
       const digits = String(rawValue || '').replace(/[^\d]/g, '');
       return digits.startsWith(year);
     };
-    await clearAndFillInputValue(birthdayField.input, visibleValue, { verify: verifyBirthdayYear, attempts: 4 });
+    const ok = await clearAndFillInputValue(birthdayField.input, visibleValue, { verify: verifyBirthdayYear, attempts: 4 });
+    if (!ok) {
+      throw new Error(`步骤 5：生日输入框填写后未生效（仍显示非目标年份）。URL: ${location.href}`);
+    }
 
     // Some layouts also include a hidden birthday input in the form; keep it in ISO to satisfy backends.
-    const hiddenBirthday = document.querySelector('input[name="birthday"][type="hidden"]');
+    const hiddenBirthday = formRoot.querySelector?.('input[name="birthday"][type="hidden"]') || document.querySelector('input[name="birthday"][type="hidden"]');
     if (hiddenBirthday) {
       try {
         utils.setInputValue(hiddenBirthday, `${year}-${month}-${day}`);
