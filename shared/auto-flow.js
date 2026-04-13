@@ -163,7 +163,7 @@ async function abandonAccountForAddPhone({ addLog, checkAutoControl, completeCur
   await checkAutoControl();
   const result = await completeCurrentAccount();
   await addLog(completionMessage);
-  return result;
+  return { ...(result || {}), abandonedForAddPhone: true, addPhoneStep: step };
 }
 
 async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSignupStep, pollVerificationCode, fillLastCode } = {}) {

@@ -945,6 +945,7 @@ async function runAutoFlow({ resume = false } = {}) {
   const totalRuns = resume && state.autoTotalRuns ? state.autoTotalRuns : state.runCount;
   const startIndex = resume && state.autoPaused ? Math.max(0, (state.autoCurrentRun || 1) - 1) : 0;
   let restartTriggered = false;
+  let consecutiveAddPhone = 0;
   await resetStepStatuses();
   await setRuntime({
     autoRunning: true,
@@ -988,6 +989,25 @@ async function runAutoFlow({ resume = false } = {}) {
             completeCurrentAccount: handlers.COMPLETE_CURRENT_ACCOUNT,
           },
         });
+
+        if (flowResult?.abandonedForAddPhone) {
+          consecutiveAddPhone += 1;
+        } else {
+          consecutiveAddPhone = 0;
+        }
+        await setRuntime({ consecutiveAddPhoneCount: consecutiveAddPhone }).catch(() => {});
+
+        // Requirement: if OAuth flow hits add-phone twice in a row, rest 10 minutes before continuing.
+        if (consecutiveAddPhone >= 2 && attempt + 1 < totalRuns) {
+          await ensureAutoFlowActive();
+          const latestState = await getState();
+          const address = latestState.currentAccount?.address ? `（${latestState.currentAccount.address}）` : '';
+          await addLog(`检测到连续 ${consecutiveAddPhone} 次出现 add-phone${address}，将暂停 10 分钟后继续。`, 'warn');
+          await sleepWithAutoFlowControl(10 * 60 * 1000);
+          consecutiveAddPhone = 0;
+          await setRuntime({ consecutiveAddPhoneCount: consecutiveAddPhone }).catch(() => {});
+        }
+
         if (attempt + 1 < totalRuns) {
           await ensureAutoFlowActive();
           await addLog('账号间延迟：等待 10 秒后开始下一个账号...', 'info');
