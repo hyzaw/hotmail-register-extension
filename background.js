@@ -633,12 +633,13 @@ async function syncCurrentAccount(state) {
   }]);
 }
 
-async function pollCodeForPhase(state, phase) {
+async function pollCodeForPhase(state, phase, options = {}) {
   const account = await ensureCurrentAccount(state);
   const emailRecord = await ensureCurrentEmailRecord(state);
   const step = phase === 'signup' ? 4 : 7;
   const phaseLabel = phase === 'signup' ? '注册验证码' : '登录验证码';
   const phaseStartedAt = new Date().toISOString();
+  const minReceivedAtOverride = String(options.minReceivedAtOverride || '').trim();
   const client = buildClient(state);
   const consumedMessageIds = getConsumedMessageIds(
     state.consumedVerificationMails || {},
@@ -666,7 +667,7 @@ async function pollCodeForPhase(state, phase) {
         email: account.address,
         intervalMs: state.pollIntervalSec * 1000,
         timeoutMs: state.pollTimeoutSec * 1000,
-        minReceivedAt: minReceivedAt || phaseStartedAt,
+        minReceivedAt: minReceivedAt || minReceivedAtOverride || phaseStartedAt,
         freshnessGraceMs: 15000,
         mailboxContext: {
           isTemp: Boolean(account?.isTemp || emailRecord?.isTemp),
@@ -707,6 +708,52 @@ async function pollCodeForPhase(state, phase) {
   const olderText = result.usedOlderMatch ? '，使用了较早的匹配邮件' : '';
   await addLog(`步骤 ${step}：已锁定${phaseLabel}${detailText}${aliasText}${olderText}。`, 'info');
   return result;
+}
+
+async function fillVerificationCodeWithRetry(state, phase, options = {}) {
+  const step = phase === 'signup' ? 4 : 7;
+  const phaseLabel = phase === 'signup' ? '注册验证码' : '登录验证码';
+  const maxAttempts = Math.max(1, Number(options.maxAttempts) || 3);
+  let attempt = 0;
+
+  while (attempt < maxAttempts) {
+    const currentState = await getState();
+    const code = phase === 'signup' ? currentState.lastSignupCode : currentState.lastLoginCode;
+    const mailMeta = phase === 'signup' ? currentState.lastSignupMail : currentState.lastLoginMail;
+    if (!code) {
+      throw new Error('当前没有可填写的验证码');
+    }
+
+    const result = await sendToActiveAuthTab({ type: 'FILL_CODE', step, payload: { code } });
+    if (!result?.invalidCode) {
+      await markVerificationMailUsed(currentState, phase);
+      await setRuntime({
+        [getVerificationCodeRuntimeKey(phase)]: '',
+        [getVerificationMailRuntimeKey(phase)]: null,
+      });
+      return result;
+    }
+
+    attempt += 1;
+    await addLog(`步骤 ${step}：当前${phaseLabel}已被页面判定为无效，等待新验证码到达（${attempt}/${maxAttempts}）...`, 'warn');
+    await markVerificationMailUsed(currentState, phase);
+    await setRuntime({
+      [getVerificationCodeRuntimeKey(phase)]: '',
+      [getVerificationMailRuntimeKey(phase)]: null,
+    });
+
+    if (attempt >= maxAttempts) {
+      throw new Error(`步骤 ${step}：连续 ${maxAttempts} 次提交验证码后仍提示无效，请检查邮箱同步与页面状态。`);
+    }
+
+    const nextState = await getState();
+    const nextResult = await pollCodeForPhase(nextState, phase, {
+      minReceivedAtOverride: mailMeta?.receivedAt || new Date().toISOString(),
+    });
+    await addLog(`${phaseLabel}：${nextResult.code}`, 'ok');
+  }
+
+  throw new Error(`步骤 ${step}：验证码回填失败`);
 }
 
 async function broadcastStopFlow() {
@@ -1440,19 +1487,13 @@ const handlers = {
   async FILL_LAST_CODE(payload) {
     const state = await getState();
     const phase = payload?.phase === 'login' ? 'login' : 'signup';
-    const code = phase === 'signup' ? state.lastSignupCode : state.lastLoginCode;
     const step = phase === 'signup' ? 4 : 7;
+    const code = phase === 'signup' ? state.lastSignupCode : state.lastLoginCode;
     if (!code) {
       throw new Error('当前没有可填写的验证码');
     }
     return runManagedStep(step, async () => {
-      const result = await sendToActiveAuthTab({ type: 'FILL_CODE', step, payload: { code } });
-      await markVerificationMailUsed(state, phase);
-      await setRuntime({
-        [getVerificationCodeRuntimeKey(phase)]: '',
-        [getVerificationMailRuntimeKey(phase)]: null,
-      });
-      return result;
+      return fillVerificationCodeWithRetry(state, phase);
     }, {
       startMessage: '',
       successMessage: '',
