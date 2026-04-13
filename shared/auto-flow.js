@@ -36,12 +36,32 @@ function hasReachedConsent(result) {
   return Boolean(result?.reachedConsent);
 }
 
+function hasAddPhoneRequirement(result) {
+  return Boolean(result?.addPhoneRequired);
+}
+
 async function finalizeFromConsent({ addLog, checkAutoControl, executeSignupStep, executeFinalVerifyStep, completeCurrentAccount, completionMessage = '单轮自动流程完成，当前邮箱已标记为已使用' } = {}) {
   await addLog('检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。');
   await checkAutoControl();
-  await executeSignupStep(8);
+  const step8Result = await executeSignupStep(8);
+  if (hasAddPhoneRequirement(step8Result)) {
+    return abandonAccountForAddPhone({
+      addLog,
+      checkAutoControl,
+      completeCurrentAccount,
+      completionMessage,
+    });
+  }
   await checkAutoControl();
   await executeFinalVerifyStep();
+  await checkAutoControl();
+  const result = await completeCurrentAccount();
+  await addLog(completionMessage);
+  return result;
+}
+
+async function abandonAccountForAddPhone({ addLog, checkAutoControl, completeCurrentAccount, completionMessage = '单轮自动流程完成，当前邮箱已标记为已使用' } = {}) {
+  await addLog('步骤 8：检测到需要添加电话号码，当前账号将放弃并标记为已注册。');
   await checkAutoControl();
   const result = await completeCurrentAccount();
   await addLog(completionMessage);
@@ -269,7 +289,14 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
     }
   }
   await checkAutoControl();
-  await executeSignupStep(8);
+  const step8Result = await executeSignupStep(8);
+  if (hasAddPhoneRequirement(step8Result)) {
+    return abandonAccountForAddPhone({
+      addLog,
+      checkAutoControl,
+      completeCurrentAccount,
+    });
+  }
   await checkAutoControl();
   await executeFinalVerifyStep();
   await checkAutoControl();
@@ -546,7 +573,15 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
 
   if (startStep <= 8) {
     await checkAutoControl();
-    await executeSignupStep(8);
+    const step8Result = await executeSignupStep(8);
+    if (hasAddPhoneRequirement(step8Result)) {
+      return abandonAccountForAddPhone({
+        addLog,
+        checkAutoControl,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
   }
 
   if (startStep <= 9) {

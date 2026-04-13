@@ -1294,7 +1294,8 @@ async function step8FindAndClick() {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 10000) {
     if (isAddPhonePageReady()) {
-      throw new Error(`当前页面已进入手机号页面，不是 OAuth 授权同意页。URL: ${location.href}`);
+      utils.log('步骤 8：检测到需要添加手机号，当前账号将放弃并标记为已注册。', 'warn');
+      return { ok: true, addPhoneRequired: true, url: location.href };
     }
 
     const continueButton = getPrimaryContinueButton();

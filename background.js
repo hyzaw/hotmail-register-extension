@@ -1494,6 +1494,15 @@ const handlers = {
             throw new Error(clickResult.error);
           }
 
+          if (clickResult?.addPhoneRequired) {
+            settled = true;
+            cleanupListener();
+            clearTimeout(timeout);
+            await addLog('步骤 8：检测到需要添加电话号码，当前账号将放弃并标记为已注册。', 'warn');
+            resolve({ addPhoneRequired: true, url: clickResult.url || '' });
+            return;
+          }
+
           const clickPlan = decideStep8ClickPlan({
             nativeClicked: Boolean(clickResult?.clicked),
             hasRect: Boolean(clickResult?.rect),
@@ -1538,7 +1547,7 @@ const handlers = {
         }
       }), {
         startMessage: '步骤 8：正在确认 OAuth 同意页并准备点击继续...',
-        successMessage: '步骤 8：已确认 OAuth 授权并捕获回调地址',
+        successMessage: '',
       });
     }
 
