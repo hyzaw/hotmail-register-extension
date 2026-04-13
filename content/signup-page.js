@@ -105,22 +105,41 @@ function isAddPhonePageReady() {
   return ADD_PHONE_PAGE_PATTERN.test(getPageTextSnapshot());
 }
 
-function isProfileSetupPageReady() {
+function getVisibleProfileSetupFields() {
   const selectors = [
     'input[name="name"]',
-    'input[placeholder*="全名"]',
+    'input[name="full_name"]',
+    'input[name="first_name"]',
+    'input[name="last_name"]',
     'input[autocomplete="name"]',
+    'input[autocomplete="given-name"]',
+    'input[autocomplete="family-name"]',
+    'input[placeholder*="全名"]',
     'input[name="birthday"]',
+    'input[type="date"]',
     'input[name="age"]',
+    'input[inputmode="numeric"]',
+    'input[type="number"]',
     '[role="spinbutton"][data-type="year"]',
+    '[role="spinbutton"][data-type="month"]',
+    '[role="spinbutton"][data-type="day"]',
   ];
 
-  const visibleField = selectors.some((selector) => {
-    const element = document.querySelector(selector);
-    return element && isVisibleElement(element);
-  });
+  return selectors
+    .map((selector) => document.querySelector(selector))
+    .filter((element, index, array) => element && isVisibleElement(element) && array.indexOf(element) === index);
+}
 
-  return visibleField || helpers.isProfileSetupPageText(getPageTextSnapshot());
+function isProfileSetupPageReady() {
+  const pageText = getPageTextSnapshot();
+  if (helpers.isLoginFlowUrl?.(location.href) || helpers.isLoginPasswordPageText(pageText)) {
+    return false;
+  }
+  if (helpers.isEmailVerificationUrl?.(location.href) || helpers.getCodeInput() || isVerificationPageStillVisible()) {
+    return false;
+  }
+
+  return getVisibleProfileSetupFields().length > 0;
 }
 
 function getSignupPasswordValidationErrorText() {
@@ -416,8 +435,8 @@ async function recoverSignupFlowFromLoginPage(timeout = 8000) {
 
 function isExplicitVisibleSignupFlowPageReady() {
   return isSignupLandingPageReady()
-    || isSignupPasswordCreationPageReady()
-    || isProfileSetupPageReady();
+    || isSignupIdentifierPageReady()
+    || isSignupPasswordCreationPageReady();
 }
 
 function getPrimaryContinueButton() {
