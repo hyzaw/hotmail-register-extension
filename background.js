@@ -900,7 +900,10 @@ async function runAutoFlow({ resume = false } = {}) {
     const result = await runAutoFlowBatch({
       runCount: totalRuns,
       startIndex,
-      continueOnError: false,
+      continueOnError: true,
+      retrySameAttemptOnError: true,
+      restOnConsecutiveErrorsMs: 60000,
+      restConsecutiveThreshold: 2,
       runFlow: async (attempt) => {
         await setRuntime({ autoCurrentRun: attempt + 1, autoTotalRuns: totalRuns });
         await addLog(`=== 第 ${attempt + 1}/${totalRuns} 轮：开始执行自动流程 ===`, 'info');
@@ -924,7 +927,7 @@ async function runAutoFlow({ resume = false } = {}) {
           },
         });
       },
-      onAttemptError: async (error) => {
+      onAttemptError: async (error, attempt, context = {}) => {
         const latestState = await getState();
         const failingAccount = latestState.currentAccount;
         const problemStep = findProblemStep(latestState.stepStatuses || {});
@@ -933,7 +936,15 @@ async function runAutoFlow({ resume = false } = {}) {
           await addLog(`${problemScope} 执行失败：${error.message || String(error)}`, 'error');
           markErrorLogged(error);
         }
-        await addLog('当前流程已停止，可点击“继续”从失败步骤接着执行。', 'warn');
+        const address = failingAccount?.address ? `（${failingAccount.address}）` : '';
+        if (context?.willRest && context?.restMs) {
+          await addLog(
+            `检测到连续 ${context.consecutiveErrors} 次错误${address}，将休息 ${formatRetryDelay(context.restMs)}后自动重试（无需手动点击继续）。`,
+            'warn',
+          );
+        } else {
+          await addLog('检测到流程错误，将自动重试（无需手动点击继续）。', 'warn');
+        }
       },
       onPaused: async (resumeIndex) => {
         await setRuntime({

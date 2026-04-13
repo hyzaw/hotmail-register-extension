@@ -770,6 +770,10 @@ export async function runAutoFlowBatch({
   runCount = 1,
   startIndex = 0,
   continueOnError = false,
+  retrySameAttemptOnError = false,
+  restOnConsecutiveErrorsMs = 0,
+  restConsecutiveThreshold = 2,
+  sleepFn = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   runFlow,
   onAttemptError = async () => {},
   onPaused = async () => {},
@@ -782,19 +786,44 @@ export async function runAutoFlowBatch({
   const failures = [];
   const totalRuns = Math.max(1, Number(runCount) || 1);
   const safeStartIndex = Math.max(0, Math.min(totalRuns, Number(startIndex) || 0));
+  const shouldRetrySameAttempt = Boolean(retrySameAttemptOnError);
+  const normalizedRestMs = Math.max(0, Number(restOnConsecutiveErrorsMs) || 0);
+  const normalizedRestThreshold = Math.max(2, Number(restConsecutiveThreshold) || 2);
+  let consecutiveErrors = 0;
 
-  for (let attempt = safeStartIndex; attempt < totalRuns; attempt += 1) {
+  let attempt = safeStartIndex;
+  while (attempt < totalRuns) {
     try {
       results.push(await runFlow(attempt));
+      consecutiveErrors = 0;
+      attempt += 1;
     } catch (error) {
       if (isAutoRunPausedError(error)) {
         await onPaused(attempt, error);
         return { results, failures, pausedAt: attempt };
       }
+
+      consecutiveErrors += 1;
       failures.push({ attempt, error });
-      await onAttemptError(error, attempt);
-      if (!continueOnError) {
-        throw error;
+
+      const willRetry = shouldRetrySameAttempt;
+      const shouldRest = normalizedRestMs > 0 && consecutiveErrors >= normalizedRestThreshold;
+      await onAttemptError(error, attempt, {
+        consecutiveErrors,
+        willRetry,
+        willRest: shouldRest,
+        restMs: shouldRest ? normalizedRestMs : 0,
+      });
+
+      if (shouldRest) {
+        await sleepFn(normalizedRestMs);
+      }
+
+      if (!shouldRetrySameAttempt) {
+        if (!continueOnError) {
+          throw error;
+        }
+        attempt += 1;
       }
     }
   }

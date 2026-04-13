@@ -96,3 +96,75 @@ test('runAutoFlowBatch stops cleanly and reports the resume cursor when paused',
   assert.equal(result.failures.length, 0);
   assert.equal(result.pausedAt, 1);
 });
+
+test('runAutoFlowBatch can retry the same attempt when retrySameAttemptOnError is enabled', async () => {
+  const calls = [];
+  let failures = 0;
+
+  const result = await runAutoFlowBatch({
+    runCount: 1,
+    continueOnError: true,
+    retrySameAttemptOnError: true,
+    runFlow: async (attempt) => {
+      calls.push(`run:${attempt}`);
+      if (failures < 2) {
+        failures += 1;
+        throw new Error(`fail:${failures}`);
+      }
+      return { status: 'completed', attempt };
+    },
+    onAttemptError: async (error, attempt, context) => {
+      calls.push(`error:${attempt}:${error.message}:${context?.consecutiveErrors}`);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    'run:0',
+    'error:0:fail:1:1',
+    'run:0',
+    'error:0:fail:2:2',
+    'run:0',
+  ]);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.failures.length, 2);
+  assert.equal(result.pausedAt, null);
+});
+
+test('runAutoFlowBatch rests after consecutive errors when configured', async () => {
+  const calls = [];
+  let failures = 0;
+  const sleeps = [];
+
+  const result = await runAutoFlowBatch({
+    runCount: 1,
+    continueOnError: true,
+    retrySameAttemptOnError: true,
+    restOnConsecutiveErrorsMs: 5,
+    restConsecutiveThreshold: 2,
+    sleepFn: async (ms) => {
+      sleeps.push(ms);
+    },
+    runFlow: async (attempt) => {
+      calls.push(`run:${attempt}`);
+      if (failures < 2) {
+        failures += 1;
+        throw new Error(`fail:${failures}`);
+      }
+      return { status: 'completed', attempt };
+    },
+    onAttemptError: async (_error, attempt, context) => {
+      calls.push(`ctx:${attempt}:${context?.consecutiveErrors}:${context?.willRest ? 1 : 0}`);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    'run:0',
+    'ctx:0:1:0',
+    'run:0',
+    'ctx:0:2:1',
+    'run:0',
+  ]);
+  assert.deepEqual(sleeps, [5]);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.failures.length, 2);
+});
