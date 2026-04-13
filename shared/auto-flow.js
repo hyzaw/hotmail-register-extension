@@ -132,10 +132,10 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
   const skipSignupVerification = Boolean(signupStep3Result?.skipSignupVerification);
   const switchToLoginFlow = Boolean(signupStep3Result?.switchToLoginFlow);
   const markAccountRegistered = Boolean(signupStep3Result?.markAccountRegistered);
-  if (markAccountRegistered) {
-    return completeRegisteredAccountAfterStep3({ addLog, completeCurrentAccount });
-  }
-  if (switchToLoginFlow) {
+  if (switchToLoginFlow || markAccountRegistered) {
+    if (markAccountRegistered && !switchToLoginFlow) {
+      await addLog('步骤 3：检测到当前邮箱已注册，改为继续 OAuth 登录流程（不再放弃该账号）');
+    }
     const loginResult = await continueFromLoginAfterStep3({
       addLog,
       checkAutoControl,
@@ -355,10 +355,10 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
         completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
       });
     }
-    if (signupStep3Result?.markAccountRegistered) {
-      return completeRegisteredAccountAfterStep3({ addLog, completeCurrentAccount });
-    }
-    if (signupStep3Result?.switchToLoginFlow) {
+    if (signupStep3Result?.switchToLoginFlow || signupStep3Result?.markAccountRegistered) {
+      if (signupStep3Result?.markAccountRegistered && !signupStep3Result?.switchToLoginFlow) {
+        await addLog('步骤 3：检测到当前邮箱已注册，改为继续 OAuth 登录流程（不再放弃该账号）');
+      }
       const loginResult = await continueFromLoginAfterStep3({
         addLog,
         checkAutoControl,

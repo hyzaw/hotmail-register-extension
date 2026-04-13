@@ -563,16 +563,36 @@ function getExistingAccountErrorText() {
   return messages.find((text) => helpers.isExistingAccountSignalText?.(text)) || '';
 }
 
-function completeStep3AsRegisteredAccount(payload, errorText = '') {
+async function completeStep3AsRegisteredAccount(payload, errorText = '') {
   clearPendingSignupStep();
   const suffix = errorText ? `。详情：${errorText}` : '';
-  utils.log(`步骤 3：检测到当前邮箱已注册，当前账号将跳过后续注册流程并标记为已注册${suffix}`, 'warn');
-  utils.reportComplete(3, {
-    address: payload.address,
-    markAccountRegistered: true,
-    existingAccountOnSignup: true,
-  });
-  return { ok: true, markAccountRegistered: true, existingAccountOnSignup: true };
+  utils.log(`步骤 3：检测到当前邮箱已注册，准备切换到登录流程继续 OAuth 授权${suffix}`, 'warn');
+
+  const pageText = getPageTextSnapshot();
+  if (helpers.isLoginFlowUrl?.(location.href) || helpers.isLoginPasswordPageText(pageText) || isLoginFlowPageReady()) {
+    return switchStep3ToLoginFlow(payload, 'existing_account');
+  }
+
+  const loginAction = findLoginAction();
+  if (loginAction) {
+    utils.log('步骤 3：正在点击登录入口以继续 OAuth 流程...', 'warn');
+    utils.clickElement(loginAction);
+  } else {
+    const loginUrl = `${location.origin}/log-in`;
+    utils.log(`步骤 3：未找到登录入口按钮，直接跳转到登录页：${loginUrl}`, 'warn');
+    location.assign(loginUrl);
+  }
+
+  // Wait until we are truly on login flow; Step 6 requires login identifiers.
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 10000) {
+    if (isLoginFlowPageReady()) {
+      return switchStep3ToLoginFlow(payload, 'existing_account');
+    }
+    await utils.sleep(300);
+  }
+
+  throw new Error(`步骤 3：检测到已注册账号，但未能切换到登录页。URL: ${location.href}`);
 }
 
 function getPrimaryContinueButton() {
@@ -693,7 +713,7 @@ async function finishStep3OnPasswordPage(payload) {
   if (!isSignupPasswordCreationPageReady()) {
     const existingAccountErrorOnPasswordPage = getExistingAccountErrorText();
     if (existingAccountErrorOnPasswordPage) {
-      return completeStep3AsRegisteredAccount(payload, existingAccountErrorOnPasswordPage);
+      return await completeStep3AsRegisteredAccount(payload, existingAccountErrorOnPasswordPage);
     }
 
     const pageText = getPageTextSnapshot();
@@ -734,7 +754,7 @@ async function finishStep3OnPasswordPage(payload) {
 
   const existingAccountErrorBeforeSubmit = getExistingAccountErrorText();
   if (existingAccountErrorBeforeSubmit) {
-    return completeStep3AsRegisteredAccount(payload, existingAccountErrorBeforeSubmit);
+    return await completeStep3AsRegisteredAccount(payload, existingAccountErrorBeforeSubmit);
   }
 
   const submitButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
@@ -785,7 +805,7 @@ async function finishStep3OnPasswordPage(payload) {
     }
     const existingAccountErrorText = getExistingAccountErrorText();
     if (existingAccountErrorText) {
-      return completeStep3AsRegisteredAccount(payload, existingAccountErrorText);
+      return await completeStep3AsRegisteredAccount(payload, existingAccountErrorText);
     }
     await utils.sleep(200);
   }

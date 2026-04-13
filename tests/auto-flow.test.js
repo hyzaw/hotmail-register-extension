@@ -209,7 +209,7 @@ test('runSingleAutoFlow jumps to login flow when step 3 detects existing account
   ]);
 });
 
-test('runSingleAutoFlow marks account completed immediately when signup password page reports existing account', async () => {
+test('runSingleAutoFlow continues OAuth login flow when signup password page reports existing account', async () => {
   const calls = [];
 
   const result = await runSingleAutoFlow({
@@ -234,6 +234,12 @@ test('runSingleAutoFlow marks account completed immediately when signup password
         if (step === 3) {
           return { markAccountRegistered: true, existingAccountOnSignup: true };
         }
+        if (step === 6) {
+          return { needsOTP: false };
+        }
+      },
+      async executeFinalVerifyStep() {
+        calls.push('executeFinalVerifyStep');
       },
       async completeCurrentAccount() {
         calls.push('completeCurrentAccount');
@@ -256,7 +262,12 @@ test('runSingleAutoFlow marks account completed immediately when signup password
     'openOauthUrl',
     'executeSignupStep:2',
     'executeSignupStep:3',
-    'log:步骤 3：检测到当前邮箱已存在关联账号，当前账号将直接标记为已注册并跳过后续流程',
+    'log:步骤 3：检测到当前邮箱已注册，改为继续 OAuth 登录流程（不再放弃该账号）',
+    'log:步骤 3：检测到当前邮箱已注册，切换到登录流程并跳过注册验证码与资料填写',
+    'executeSignupStep:6',
+    'log:步骤 6：已通过密码登录，跳过登录验证码阶段',
+    'executeSignupStep:8',
+    'executeFinalVerifyStep',
     'completeCurrentAccount',
     'log:单轮自动流程完成，当前邮箱已标记为已使用',
   ]);
