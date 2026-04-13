@@ -247,28 +247,39 @@ test('describeStep3LoginFlowState summarizes step 3 login-flow signals for logs'
 });
 
 test('buildRandomProfile returns varied profile data for step 5', () => {
-  const currentYear = new Date().getUTCFullYear();
-  const firstProfile = oauthStepHelpersModule.buildRandomProfile?.(() => 0);
-  const secondProfile = oauthStepHelpersModule.buildRandomProfile?.(() => 0.99);
+  const now = new Date(Date.UTC(2026, 3, 14)); // 2026-04-14
+  const firstProfile = oauthStepHelpersModule.buildRandomProfile?.(() => 0, { now, bufferDays: 0 });
+  const secondProfile = oauthStepHelpersModule.buildRandomProfile?.(() => 0.999999999999, { now, bufferDays: 0 });
 
-  assert.deepEqual(firstProfile, {
-    firstName: 'Adrian',
-    lastName: 'Bennett',
-    fullName: 'Adrian Bennett',
-    age: '19',
-    birthday: `${currentYear - 19}-01-01`,
-  });
+  const computeAge = (birthIso) => {
+    const [y, m, d] = birthIso.split('-').map((v) => Number(v));
+    const by = y;
+    const bm = m - 1;
+    const bd = d;
+    let age = now.getUTCFullYear() - by;
+    const monthDiff = now.getUTCMonth() - bm;
+    if (monthDiff < 0 || (monthDiff === 0 && now.getUTCDate() < bd)) {
+      age -= 1;
+    }
+    return age;
+  };
 
-  assert.deepEqual(secondProfile, {
-    firstName: 'Wyatt',
-    lastName: 'Winslow',
-    fullName: 'Wyatt Winslow',
-    age: '42',
-    birthday: `${currentYear - 42}-12-28`,
-  });
+  assert.deepEqual(firstProfile.firstName, 'Adrian');
+  assert.deepEqual(firstProfile.lastName, 'Bennett');
+  assert.deepEqual(firstProfile.fullName, 'Adrian Bennett');
+  assert.match(firstProfile.birthday, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(Number(firstProfile.age) > 20);
+  assert.ok(Number(firstProfile.age) < 40);
+  assert.equal(computeAge(firstProfile.birthday), Number(firstProfile.age));
 
-  assert.ok(Number(firstProfile.age) > 18);
-  assert.ok(Number(secondProfile.age) > 18);
+  assert.deepEqual(secondProfile.firstName, 'Wyatt');
+  assert.deepEqual(secondProfile.lastName, 'Winslow');
+  assert.deepEqual(secondProfile.fullName, 'Wyatt Winslow');
+  assert.match(secondProfile.birthday, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(Number(secondProfile.age) > 20);
+  assert.ok(Number(secondProfile.age) < 40);
+  assert.equal(computeAge(secondProfile.birthday), Number(secondProfile.age));
+
   assert.notEqual(firstProfile.fullName, secondProfile.fullName);
   assert.notEqual(firstProfile.age, secondProfile.age);
 });

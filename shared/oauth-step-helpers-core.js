@@ -257,13 +257,68 @@ function pad2(value) {
   return String(value).padStart(2, '0');
 }
 
-export function buildRandomProfile(randomFn = Math.random) {
+export function buildRandomProfile(randomFn = Math.random, options = {}) {
   const firstNames = ['Adrian', 'Blake', 'Calvin', 'Damian', 'Elliot', 'Felix', 'Gavin', 'Holden', 'Isaac', 'Julian', 'Kieran', 'Landon', 'Miles', 'Nolan', 'Oscar', 'Parker', 'Quentin', 'Rowan', 'Sawyer', 'Theo', 'Vincent', 'Wesley', 'Xavier', 'Wyatt'];
   const lastNames = ['Bennett', 'Caldwell', 'Dalton', 'Ellis', 'Fletcher', 'Griffin', 'Hawkins', 'Iverson', 'Jennings', 'Kensington', 'Lawson', 'Mitchell', 'North', 'Prescott', 'Quincy', 'Remington', 'Sullivan', 'Tatum', 'Underwood', 'Vaughn', 'Walker', 'Whitman', 'York', 'Winslow'];
-  const numericAge = 19 + Math.floor(randomFn() * 24);
-  const birthYear = new Date().getUTCFullYear() - numericAge;
-  const birthMonth = 1 + Math.floor(randomFn() * 12);
-  const birthDay = 1 + Math.floor(randomFn() * 28);
+
+  // Requirement: age must be >20 and <40.
+  // To avoid timezone/boundary issues, we generate birthday in a safe window and compute age from it.
+  const now = options?.now instanceof Date ? options.now : new Date();
+  const bufferDays = Math.max(0, Number(options?.bufferDays) || 7);
+  const minAge = 21;
+  const maxAge = 39;
+
+  const nowY = now.getUTCFullYear();
+  const nowM = now.getUTCMonth();
+  const nowD = now.getUTCDate();
+
+  // Inclusive range of allowed birthdays (UTC midnight):
+  // - Not turning 40 yet: birthday > (now - 40 years), so min = (now - 40 years + 1 day) + buffer.
+  // - Already 21+: birthday <= (now - 21 years), so max = (now - 21 years) - buffer.
+  let minBirth = new Date(Date.UTC(nowY - (maxAge + 1), nowM, nowD + 1 + bufferDays));
+  let maxBirth = new Date(Date.UTC(nowY - minAge, nowM, nowD - bufferDays));
+  if (minBirth.getTime() > maxBirth.getTime()) {
+    // If buffer collapses the window, retry with no buffer.
+    minBirth = new Date(Date.UTC(nowY - (maxAge + 1), nowM, nowD + 1));
+    maxBirth = new Date(Date.UTC(nowY - minAge, nowM, nowD));
+  }
+
+  const computeAge = (birthDate) => {
+    let age = nowY - birthDate.getUTCFullYear();
+    const monthDiff = nowM - birthDate.getUTCMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && nowD < birthDate.getUTCDate())) {
+      age -= 1;
+    }
+    return age;
+  };
+
+  const pickBirthday = () => {
+    const minMs = minBirth.getTime();
+    const maxMs = maxBirth.getTime();
+    const span = Math.max(1, (maxMs - minMs) + 1);
+    const offset = Math.floor(Math.max(0, Math.min(0.999999999999, Number(randomFn()) || 0)) * span);
+    const date = new Date(minMs + Math.min(span - 1, offset));
+
+    // Avoid Feb 29 to reduce edge-case validation failures on some widgets.
+    if (date.getUTCMonth() === 1 && date.getUTCDate() === 29) {
+      date.setUTCDate(28);
+    }
+    return date;
+  };
+
+  let birthdayDate = pickBirthday();
+  let numericAge = computeAge(birthdayDate);
+  // Very defensive: loop a few times in case of weird boundary behavior.
+  for (let i = 0; i < 5 && (numericAge < minAge || numericAge > maxAge); i += 1) {
+    birthdayDate = pickBirthday();
+    numericAge = computeAge(birthdayDate);
+  }
+  if (numericAge < minAge) numericAge = minAge;
+  if (numericAge > maxAge) numericAge = maxAge;
+
+  const birthYear = birthdayDate.getUTCFullYear();
+  const birthMonth = birthdayDate.getUTCMonth() + 1;
+  const birthDay = birthdayDate.getUTCDate();
   const firstName = pickFromList(firstNames, randomFn);
   const lastName = pickFromList(lastNames, randomFn);
 
