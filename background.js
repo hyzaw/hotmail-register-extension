@@ -6,7 +6,7 @@ import {
   resolveCurrentAccountSelection,
   summarizeAccountAvailability,
 } from './shared/account-ledger.js';
-import { continueSingleAutoFlow, runAutoFlowBatch, runSingleAutoFlow } from './shared/auto-flow.js';
+import { continueSingleAutoFlow, runAutoFlowBatch, runSingleAutoFlowWithAutoRetry } from './shared/auto-flow.js';
 import { createAutoRunPausedError } from './shared/auto-run-control.js';
 import { buildAutoRestartRuntimeUpdates } from './shared/auto-restart.js';
 import { getAuthBrowsingDataOptions, getAuthBrowsingDataRemovals } from './shared/auth-browsing-data.js';
@@ -904,21 +904,25 @@ async function runAutoFlow({ resume = false } = {}) {
       runFlow: async (attempt) => {
         await setRuntime({ autoCurrentRun: attempt + 1, autoTotalRuns: totalRuns });
         await addLog(`=== 第 ${attempt + 1}/${totalRuns} 轮：开始执行自动流程 ===`, 'info');
-        return runSingleAutoFlow({
-        actions: {
-          addLog,
-          checkAutoControl: ensureAutoFlowActive,
-          prepareNextAccount: handlers.PREPARE_NEXT_ACCOUNT,
-          refreshOauthFromVps: handlers.GET_OAUTH_FROM_VPS,
-          findCurrentEmailRecord: handlers.FIND_CURRENT_EMAIL_RECORD,
-          openOauthUrl: handlers.OPEN_OAUTH_URL,
-          executeSignupStep: async (step) => handlers.EXECUTE_SIGNUP_STEP({ step }),
-          pollVerificationCode: async (phase) => handlers.POLL_VERIFICATION_CODE({ phase }),
-          fillLastCode: async (phase) => handlers.FILL_LAST_CODE({ phase }),
-          executeFinalVerifyStep: async () => handlers.EXECUTE_FINAL_VERIFY_STEP(),
-          completeCurrentAccount: handlers.COMPLETE_CURRENT_ACCOUNT,
-        },
-      });
+        return runSingleAutoFlowWithAutoRetry({
+          state: await getState(),
+          getState,
+          maxFlowAttempts: 3,
+          maxOauthAttempts: 3,
+          actions: {
+            addLog,
+            checkAutoControl: ensureAutoFlowActive,
+            prepareNextAccount: handlers.PREPARE_NEXT_ACCOUNT,
+            refreshOauthFromVps: handlers.GET_OAUTH_FROM_VPS,
+            findCurrentEmailRecord: handlers.FIND_CURRENT_EMAIL_RECORD,
+            openOauthUrl: handlers.OPEN_OAUTH_URL,
+            executeSignupStep: async (step) => handlers.EXECUTE_SIGNUP_STEP({ step }),
+            pollVerificationCode: async (phase) => handlers.POLL_VERIFICATION_CODE({ phase }),
+            fillLastCode: async (phase) => handlers.FILL_LAST_CODE({ phase }),
+            executeFinalVerifyStep: async () => handlers.EXECUTE_FINAL_VERIFY_STEP(),
+            completeCurrentAccount: handlers.COMPLETE_CURRENT_ACCOUNT,
+          },
+        });
       },
       onAttemptError: async (error) => {
         const latestState = await getState();

@@ -1,5 +1,37 @@
 import { isAutoRunPausedError } from './auto-run-control.js';
 
+const STEP_TITLES = Object.freeze({
+  1: '获取 OAuth 链接',
+  2: '进入注册流程',
+  3: '填写邮箱和密码',
+  4: '获取注册验证码',
+  5: '填写基础资料',
+  6: '刷新 OAuth 并登录',
+  7: '获取登录验证码',
+  8: '确认 OAuth 授权',
+  9: '管理 API 校验',
+});
+
+function getStepLabel(step) {
+  const title = STEP_TITLES[step];
+  return title ? `步骤 ${step}：${title}` : `步骤 ${step}`;
+}
+
+function findProblemStep(stepStatuses = {}) {
+  for (const status of ['failed', 'running']) {
+    for (let step = 1; step <= 9; step += 1) {
+      if (stepStatuses[step] === status) {
+        return step;
+      }
+    }
+  }
+  return null;
+}
+
+function isOauthStep(step) {
+  return step === 8 || step === 9;
+}
+
 async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSignupStep, pollVerificationCode, fillLastCode } = {}) {
   await addLog('步骤 3：检测到当前邮箱已注册，切换到登录流程并跳过注册验证码与资料填写');
   await checkAutoControl();
@@ -275,6 +307,82 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
   const result = await completeCurrentAccount();
   await addLog('自动流程继续完成，当前邮箱已标记为已使用');
   return result;
+}
+
+export async function runSingleAutoFlowWithAutoRetry({
+  state = {},
+  getState = async () => state,
+  actions = {},
+  maxFlowAttempts = 3,
+  maxOauthAttempts = 3,
+} = {}) {
+  const {
+    addLog = async () => {},
+    checkAutoControl = async () => {},
+  } = actions;
+
+  const normalizedMaxFlowAttempts = Math.max(1, Number(maxFlowAttempts) || 1);
+  const normalizedMaxOauthAttempts = Math.max(1, Number(maxOauthAttempts) || 1);
+  let flowAttempt = 1;
+
+  while (flowAttempt <= normalizedMaxFlowAttempts) {
+    try {
+      return await runSingleAutoFlow({ actions });
+    } catch (error) {
+      if (isAutoRunPausedError(error)) {
+        throw error;
+      }
+
+      let latestState = await getState();
+      let problemStep = findProblemStep(latestState.stepStatuses || {});
+
+      if (isOauthStep(problemStep)) {
+        let oauthAttempt = 1;
+        let latestError = error;
+
+        while (oauthAttempt < normalizedMaxOauthAttempts) {
+          oauthAttempt += 1;
+          await checkAutoControl();
+          await addLog(`${getStepLabel(problemStep)} 失败，正在自动重试 OAuth（第 ${oauthAttempt}/${normalizedMaxOauthAttempts} 次尝试）`);
+
+          try {
+            return await continueSingleAutoFlow({
+              state: await getState(),
+              actions,
+            });
+          } catch (oauthError) {
+            if (isAutoRunPausedError(oauthError)) {
+              throw oauthError;
+            }
+            latestError = oauthError;
+            latestState = await getState();
+            problemStep = findProblemStep(latestState.stepStatuses || {});
+            if (!isOauthStep(problemStep)) {
+              break;
+            }
+          }
+        }
+
+        if (flowAttempt >= normalizedMaxFlowAttempts) {
+          throw latestError;
+        }
+
+        await checkAutoControl();
+        await addLog(`OAuth 自动重试未成功，当前账号将自动重试整轮流程（第 ${flowAttempt + 1}/${normalizedMaxFlowAttempts} 次尝试）`);
+      } else {
+        if (flowAttempt >= normalizedMaxFlowAttempts) {
+          throw error;
+        }
+
+        await checkAutoControl();
+        await addLog(`注册成功前出现错误，当前账号将自动重试整轮流程（第 ${flowAttempt + 1}/${normalizedMaxFlowAttempts} 次尝试）`);
+      }
+
+      flowAttempt += 1;
+    }
+  }
+
+  throw new Error('自动重试逻辑异常退出');
 }
 
 export async function runAutoFlowBatch({
