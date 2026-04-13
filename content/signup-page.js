@@ -306,6 +306,15 @@ function fillContentEditableSegment(segment, value) {
       }));
     } catch {}
   };
+  const fireKey = (type, key) => {
+    try {
+      segment.dispatchEvent(new KeyboardEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        key,
+      }));
+    } catch {}
+  };
   try {
     const selection = window.getSelection?.();
     if (selection) {
@@ -317,18 +326,24 @@ function fillContentEditableSegment(segment, value) {
   } catch {}
 
   try {
-    fireBeforeInput(text);
-    document.execCommand?.('insertText', false, text);
+    // Insert per-character so react-aria segment handlers can update internal state reliably.
+    const chunks = text ? Array.from(text) : [''];
+    for (const chunk of chunks) {
+      fireKey('keydown', chunk);
+      fireBeforeInput(chunk);
+      document.execCommand?.('insertText', false, chunk);
+      try {
+        segment.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: chunk, inputType: 'insertText' }));
+      } catch {
+        segment.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      fireKey('keyup', chunk);
+    }
   } catch {
     // execCommand is deprecated; fallback to direct text replacement.
     segment.textContent = text;
   }
 
-  try {
-    segment.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: text, inputType: 'insertText' }));
-  } catch {
-    segment.dispatchEvent(new Event('input', { bubbles: true }));
-  }
   segment.dispatchEvent(new Event('change', { bubbles: true }));
   try {
     segment.dispatchEvent(new FocusEvent('blur', { bubbles: true, cancelable: false }));
@@ -1477,6 +1492,12 @@ async function step5FillProfile() {
 
   const readSpinbuttonDigits = (segment) => {
     if (!segment) return '';
+    const isPlaceholder = String(segment.getAttribute?.('data-placeholder') || '') === 'true'
+      || /空/.test(String(segment.getAttribute?.('aria-valuetext') || ''))
+      || /^(年|月|日)$/.test(String(segment.textContent || '').trim());
+    if (isPlaceholder) {
+      return '';
+    }
     const textDigits = String(segment.textContent || '').replace(/[^\d]/g, '');
     if (textDigits) return textDigits;
     const ariaNow = String(segment.getAttribute?.('aria-valuenow') || '').replace(/[^\d]/g, '');
@@ -1485,7 +1506,7 @@ async function step5FillProfile() {
     return '';
   };
 
-  const fillBirthdaySegmentsWithVerify = async ({ yearSegment, monthSegment, daySegment }, { year, month, day }) => {
+  const fillBirthdaySegmentsWithVerify = async ({ yearSegment, monthSegment, daySegment }, { year, month, day, hiddenInput = null }) => {
     const expectedYear = String(year);
     const expectedMonth = String(Number(month));
     const expectedDay = String(Number(day));
@@ -1501,9 +1522,20 @@ async function step5FillProfile() {
       fillContentEditableSegment(daySegment, expectedDay);
       await utils.sleep(120);
 
+      if (hiddenInput) {
+        try {
+          // Keep hidden value aligned; some variants validate against it.
+          const isoMonth = String(Number(month)).padStart(2, '0');
+          const isoDay = String(Number(day)).padStart(2, '0');
+          utils.setInputValue(hiddenInput, `${expectedYear}-${isoMonth}-${isoDay}`);
+        } catch {}
+      }
+
       const gotYearDigits = readSpinbuttonDigits(yearSegment);
       const gotYear = gotYearDigits.length >= 4 ? gotYearDigits.slice(-4) : gotYearDigits;
-      if (gotYear === expectedYear) {
+      const placeholder = String(yearSegment.getAttribute?.('data-placeholder') || '') === 'true'
+        || /空/.test(String(yearSegment.getAttribute?.('aria-valuetext') || ''));
+      if (!placeholder && gotYear === expectedYear) {
         return true;
       }
       utils.log(`步骤 5：生日填写未生效，正在重试（${attempt}/4）。当前 year=${gotYearDigits || '(empty)'}, 期望=${expectedYear}`, 'warn');
@@ -1589,13 +1621,13 @@ async function step5FillProfile() {
     utils.log(`步骤 5：年龄已填写：${profile.age}`);
   } else if (birthdayField?.mode === 'segments') {
     const { year, month, day } = resolveBirthdayParts(profile.birthday);
-    const ok = await fillBirthdaySegmentsWithVerify(birthdayField, { year, month, day });
+    const hiddenBirthday = formRoot.querySelector?.('input[name="birthday"][type="hidden"]') || document.querySelector('input[name="birthday"][type="hidden"]');
+    const ok = await fillBirthdaySegmentsWithVerify(birthdayField, { year, month, day, hiddenInput: hiddenBirthday });
     if (!ok) {
       throw new Error(`步骤 5：生日字段填写后未生效（仍显示非目标年份）。URL: ${location.href}`);
     }
 
     // If the hidden field exists but stays empty, fall back to setting it just before submit.
-    const hiddenBirthday = formRoot.querySelector?.('input[name="birthday"][type="hidden"]') || document.querySelector('input[name="birthday"][type="hidden"]');
     if (hiddenBirthday) {
       try {
         await utils.sleep(100);
