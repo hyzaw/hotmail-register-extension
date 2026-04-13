@@ -296,13 +296,13 @@ function fillContentEditableSegment(segment, value) {
 
   const text = String(value ?? '').trim();
   // react-aria DateField segments often rely on beforeinput/input events to update internal state.
-  const fireBeforeInput = (data) => {
+  const fireBeforeInput = (data, inputType = 'insertText') => {
     try {
       segment.dispatchEvent(new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,
         data,
-        inputType: 'insertText',
+        inputType,
       }));
     } catch {}
   };
@@ -326,19 +326,22 @@ function fillContentEditableSegment(segment, value) {
   } catch {}
 
   try {
-    // Insert per-character so react-aria segment handlers can update internal state reliably.
-    const chunks = text ? Array.from(text) : [''];
-    for (const chunk of chunks) {
-      fireKey('keydown', chunk);
-      fireBeforeInput(chunk);
-      document.execCommand?.('insertText', false, chunk);
-      try {
-        segment.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: chunk, inputType: 'insertText' }));
-      } catch {
-        segment.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      fireKey('keyup', chunk);
+    // Clear existing content first, then do a single bulk insert.
+    // Per-character insert can auto-advance focus between segments and cause truncated years (e.g. "199").
+    fireKey('keydown', 'Backspace');
+    fireBeforeInput('', 'deleteContentBackward');
+    document.execCommand?.('delete', false, null);
+    fireKey('keyup', 'Backspace');
+
+    fireKey('keydown', text ? text[0] : '');
+    fireBeforeInput(text, 'insertText');
+    document.execCommand?.('insertText', false, text);
+    try {
+      segment.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: text, inputType: 'insertText' }));
+    } catch {
+      segment.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    fireKey('keyup', text ? text[0] : '');
   } catch {
     // execCommand is deprecated; fallback to direct text replacement.
     segment.textContent = text;
@@ -1498,10 +1501,12 @@ async function step5FillProfile() {
     if (isPlaceholder) {
       return '';
     }
-    const textDigits = String(segment.textContent || '').replace(/[^\d]/g, '');
-    if (textDigits) return textDigits;
     const ariaNow = String(segment.getAttribute?.('aria-valuenow') || '').replace(/[^\d]/g, '');
     // aria-valuenow can be non-empty even for placeholders; only use it when it looks like a real value.
+    const textDigits = String(segment.textContent || '').replace(/[^\d]/g, '');
+    // Prefer the longer signal (aria-valuenow is usually the canonical value for react-aria spinbuttons).
+    if (ariaNow && ariaNow.length > textDigits.length) return ariaNow;
+    if (textDigits) return textDigits;
     if (ariaNow && ariaNow.length >= 1) return ariaNow;
     return '';
   };
@@ -1538,7 +1543,14 @@ async function step5FillProfile() {
       if (!placeholder && gotYear === expectedYear) {
         return true;
       }
-      utils.log(`步骤 5：生日填写未生效，正在重试（${attempt}/4）。当前 year=${gotYearDigits || '(empty)'}, 期望=${expectedYear}`, 'warn');
+
+      const yearText = String(yearSegment.textContent || '').trim();
+      const yearAriaNow = String(yearSegment.getAttribute?.('aria-valuenow') || '').trim();
+      const yearAriaText = String(yearSegment.getAttribute?.('aria-valuetext') || '').trim();
+      utils.log(
+        `步骤 5：生日填写未生效，正在重试（${attempt}/4）。当前 year=${gotYearDigits || '(empty)'}, 期望=${expectedYear}（text="${yearText}", ariaNow="${yearAriaNow}", ariaText="${yearAriaText}", placeholder=${placeholder}）`,
+        'warn'
+      );
       await utils.sleep(120);
     }
 
