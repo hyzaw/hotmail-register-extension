@@ -662,6 +662,8 @@ async function pollCodeForPhase(state, phase, options = {}) {
   const verificationRequestedAt = String(state[getVerificationRequestedAtRuntimeKey(phase)] || '').trim();
   const minReceivedAtOverride = String(options.minReceivedAtOverride || '').trim();
   const client = buildClient(state);
+  // If no mail arrives within 30s, proactively click "Resend email" on the page to avoid long stalls.
+  const pollTimeoutMs = Math.min(state.pollTimeoutSec * 1000, 30000);
   const consumedMessageIds = getConsumedMessageIds(
     state.consumedVerificationMails || {},
     collectVerificationLedgerEmails(state)
@@ -694,7 +696,7 @@ async function pollCodeForPhase(state, phase, options = {}) {
         detailFetcher: client,
         email: account.address,
         intervalMs: state.pollIntervalSec * 1000,
-        timeoutMs: state.pollTimeoutSec * 1000,
+        timeoutMs: pollTimeoutMs,
         minReceivedAt: minReceivedAt || minReceivedAtOverride || verificationRequestedAt || phaseStartedAt,
         freshnessGraceMs: 0,
         mailboxContext: {
