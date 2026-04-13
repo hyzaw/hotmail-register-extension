@@ -5,13 +5,18 @@ import { pollVerificationCodeWithResend } from '../shared/verification-recovery.
 
 test('pollVerificationCodeWithResend retries by requesting resend after a failed poll round', async () => {
   const calls = [];
+  const sleeps = [];
   let round = 0;
 
   const result = await pollVerificationCodeWithResend({
     step: 4,
     maxRounds: 2,
+    waitBeforePollMs: 3000,
     addLog: async (message, level) => {
       calls.push(`log:${level}:${message}`);
+    },
+    sleep: async (ms) => {
+      sleeps.push(ms);
     },
     resendVerificationCode: async (step) => {
       calls.push(`resend:${step}`);
@@ -28,14 +33,17 @@ test('pollVerificationCodeWithResend retries by requesting resend after a failed
   });
 
   assert.equal(result.code, '123456');
+  assert.deepEqual(sleeps, [3000, 3000]);
   assert.deepEqual(calls, [
     'log:info:步骤 4：开始第 1/2 轮验证码轮询。',
+    'log:info:步骤 4：等待 3 秒后读取最新验证码邮件。',
     'poll:1:',
     'log:warn:步骤 4：轮询超时',
     'log:warn:步骤 4：将重新发送验证码后重试（2/2）...',
     'resend:4',
     'log:warn:步骤 4：已请求新的验证码，准备进入第 2 轮轮询。',
     'log:info:步骤 4：开始第 2/2 轮验证码轮询。',
+    'log:info:步骤 4：等待 3 秒后读取最新验证码邮件。',
     'poll:2:2026-04-12T20:00:00.000Z',
   ]);
 });

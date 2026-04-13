@@ -1,9 +1,11 @@
 export async function pollVerificationCodeWithResend({
   step,
   maxRounds = 3,
+  waitBeforePollMs = 0,
   addLog = async () => {},
   resendVerificationCode,
   pollVerificationCode,
+  sleep = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   if (typeof pollVerificationCode !== 'function') {
     throw new Error('缺少 pollVerificationCode 函数');
@@ -15,6 +17,10 @@ export async function pollVerificationCodeWithResend({
   for (let round = 1; round <= Math.max(1, Number(maxRounds) || 1); round += 1) {
     try {
       await addLog(`步骤 ${step}：开始第 ${round}/${maxRounds} 轮验证码轮询。`, 'info');
+      if (Number(waitBeforePollMs) > 0) {
+        await addLog(`步骤 ${step}：等待 ${Math.round(Number(waitBeforePollMs) / 1000)} 秒后读取最新验证码邮件。`, 'info');
+        await sleep(Number(waitBeforePollMs));
+      }
       return await pollVerificationCode({ minReceivedAt, round });
     } catch (error) {
       lastError = error;

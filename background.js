@@ -669,6 +669,7 @@ async function pollCodeForPhase(state, phase, options = {}) {
   const result = await pollVerificationCodeWithResend({
     step,
     maxRounds: 3,
+    waitBeforePollMs: 3000,
     addLog,
     resendVerificationCode: async (targetStep) => {
       await ensureAutoFlowActive();
