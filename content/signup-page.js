@@ -196,7 +196,6 @@ function getVisibleProfileSetupFields() {
     'input[autocomplete="given-name"]',
     'input[autocomplete="family-name"]',
     'input[placeholder*="全名"]',
-    'input[name="birthday"]',
     'input[type="date"]',
     'input[name="age"]',
     'input[inputmode="numeric"]',
@@ -221,6 +220,63 @@ function isProfileSetupPageReady() {
   }
 
   return getVisibleProfileSetupFields().length > 0;
+}
+
+function queryFirstVisible(selector) {
+  return Array.from(document.querySelectorAll(selector))
+    .find((element) => element && isVisibleElement(element)) || null;
+}
+
+function getVisibleBirthdayDateField() {
+  const dateInput = queryFirstVisible('input[type="date"]');
+  if (dateInput) {
+    return { mode: 'date_input', input: dateInput };
+  }
+
+  const yearSegment = queryFirstVisible('[role="spinbutton"][data-type="year"][contenteditable="true"]');
+  const monthSegment = queryFirstVisible('[role="spinbutton"][data-type="month"][contenteditable="true"]');
+  const daySegment = queryFirstVisible('[role="spinbutton"][data-type="day"][contenteditable="true"]');
+  if (yearSegment && monthSegment && daySegment) {
+    return { mode: 'segments', yearSegment, monthSegment, daySegment };
+  }
+
+  // Some variants keep a visible text input for birthday.
+  const birthdayTextInput = queryFirstVisible('input[name="birthday"]:not([type="hidden"])');
+  if (birthdayTextInput) {
+    return { mode: 'birthday_input', input: birthdayTextInput };
+  }
+
+  return null;
+}
+
+function fillContentEditableSegment(segment, value) {
+  if (!segment) return;
+  segment.focus?.();
+
+  const text = String(value ?? '').trim();
+  try {
+    const selection = window.getSelection?.();
+    if (selection) {
+      selection.removeAllRanges();
+      const range = document.createRange();
+      range.selectNodeContents(segment);
+      selection.addRange(range);
+    }
+  } catch {}
+
+  try {
+    document.execCommand?.('insertText', false, text);
+  } catch {
+    // execCommand is deprecated; fallback to direct text replacement.
+    segment.textContent = text;
+  }
+
+  try {
+    segment.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: text, inputType: 'insertText' }));
+  } catch {
+    segment.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  segment.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 function getSignupPasswordValidationErrorText() {
@@ -1303,14 +1359,14 @@ async function step5FillProfile() {
   let firstNameInput = null;
   let lastNameInput = null;
   let ageInput = null;
-  let birthdayInput = null;
+  let birthdayField = null;
 
   while (Date.now() - waitStartedAt < 10000) {
     singleNameInput = document.querySelector('input[name="name"], input[placeholder*="全名"], input[autocomplete="name"]');
     firstNameInput = document.querySelector('input[name="first_name"], input[autocomplete="given-name"]');
     lastNameInput = document.querySelector('input[name="last_name"], input[autocomplete="family-name"]');
     ageInput = document.querySelector('input[name="age"], input[inputmode="numeric"], input[type="number"]');
-    birthdayInput = document.querySelector('input[name="birthday"]');
+    birthdayField = getVisibleBirthdayDateField();
 
     const hasNameField = Boolean(
       (singleNameInput && isVisibleElement(singleNameInput))
@@ -1318,7 +1374,7 @@ async function step5FillProfile() {
     );
     const hasProfileField = Boolean(
       (ageInput && isVisibleElement(ageInput))
-      || birthdayInput
+      || birthdayField
     );
 
     if (hasNameField && hasProfileField) {
@@ -1342,10 +1398,21 @@ async function step5FillProfile() {
   if (ageInput && isVisibleElement(ageInput)) {
     utils.setInputValue(ageInput, profile.age);
     utils.log(`步骤 5：年龄已填写：${profile.age}`);
-  } else if (birthdayInput) {
-    birthdayInput.value = profile.birthday;
-    birthdayInput.dispatchEvent(new Event('input', { bubbles: true }));
-    birthdayInput.dispatchEvent(new Event('change', { bubbles: true }));
+  } else if (birthdayField?.mode === 'segments') {
+    const [year, month, day] = String(profile.birthday || '').split('-');
+    fillContentEditableSegment(birthdayField.yearSegment, year || '2000');
+    fillContentEditableSegment(birthdayField.monthSegment, String(Math.max(1, Number(month) || 1)));
+    fillContentEditableSegment(birthdayField.daySegment, String(Math.max(1, Number(day) || 1)));
+    // Also try to set the hidden input value when present (some variants validate against it).
+    const hiddenBirthday = document.querySelector('input[name="birthday"][type="hidden"]');
+    if (hiddenBirthday) {
+      try {
+        utils.setInputValue(hiddenBirthday, `${year || '2000'}-${String(month || '1').padStart(2, '0')}-${String(day || '1').padStart(2, '0')}`);
+      } catch {}
+    }
+    utils.log(`步骤 5：生日已填写：${profile.birthday}`);
+  } else if (birthdayField?.input) {
+    utils.setInputValue(birthdayField.input, profile.birthday);
     utils.log(`步骤 5：生日已填写：${profile.birthday}`);
   } else {
     throw new Error(`步骤 5：未找到可填写的年龄或生日字段。URL: ${location.href}`);
