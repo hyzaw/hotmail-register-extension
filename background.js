@@ -19,6 +19,7 @@ import { chooseOauthTabCandidate, listAuthTabIds } from './shared/open-oauth-tar
 import { createManagementApiClient } from './shared/management-api-client.js';
 import { pollManagementAuthStatus } from './shared/management-auth-status.js';
 import { withManagementApiRetry } from './shared/management-api-retry.js';
+import { createDirectProxyFetch } from './shared/direct-proxy-fetch.js';
 import { findCompletedLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
 import {
   clearPendingSignupStepForTab,
@@ -324,10 +325,16 @@ async function resetAuthAttemptRuntime() {
   });
 }
 
+const managementDirectFetch = createDirectProxyFetch({
+  fetchFn: (...args) => fetch(...args),
+  proxySettingsApi: chrome.proxy?.settings || null,
+});
+
 function buildManagementClient(settings) {
   return createManagementApiClient({
     baseUrl: settings.vpsUrl,
     managementKey: settings.vpsPassword,
+    fetchFn: managementDirectFetch,
   });
 }
 

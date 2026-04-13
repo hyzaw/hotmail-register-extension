@@ -17,6 +17,7 @@
     "activeTab",
     "cookies",
     "debugger",
+    "proxy",
     "webRequest",
     "webNavigation",
     "scripting"
