@@ -256,6 +256,17 @@ function fillContentEditableSegment(segment, value) {
   segment.focus?.();
 
   const text = String(value ?? '').trim();
+  // react-aria DateField segments often rely on beforeinput/input events to update internal state.
+  const fireBeforeInput = (data) => {
+    try {
+      segment.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data,
+        inputType: 'insertText',
+      }));
+    } catch {}
+  };
   try {
     const selection = window.getSelection?.();
     if (selection) {
@@ -267,6 +278,7 @@ function fillContentEditableSegment(segment, value) {
   } catch {}
 
   try {
+    fireBeforeInput(text);
     document.execCommand?.('insertText', false, text);
   } catch {
     // execCommand is deprecated; fallback to direct text replacement.
@@ -279,6 +291,9 @@ function fillContentEditableSegment(segment, value) {
     segment.dispatchEvent(new Event('input', { bubbles: true }));
   }
   segment.dispatchEvent(new Event('change', { bubbles: true }));
+  try {
+    segment.dispatchEvent(new FocusEvent('blur', { bubbles: true, cancelable: false }));
+  } catch {}
 }
 
 function getSignupPasswordValidationErrorText() {
@@ -1349,6 +1364,17 @@ async function step5FillProfile() {
     return buildConsentReachedResult();
   }
 
+  const resolveBirthdayParts = (rawBirthday) => {
+    const fallback = { year: '2000', month: '01', day: '01' };
+    const value = String(rawBirthday || '').trim();
+    const match = value.match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/);
+    if (!match) return fallback;
+    const year = match[1];
+    const month = String(Math.max(1, Math.min(12, Number(match[2]) || 1))).padStart(2, '0');
+    const day = String(Math.max(1, Math.min(31, Number(match[3]) || 1))).padStart(2, '0');
+    return { year, month, day };
+  };
+
   const profile = helpers.buildRandomProfile?.() || {
     firstName: 'Ethan',
     lastName: 'Carter',
@@ -1401,20 +1427,42 @@ async function step5FillProfile() {
     utils.setInputValue(ageInput, profile.age);
     utils.log(`步骤 5：年龄已填写：${profile.age}`);
   } else if (birthdayField?.mode === 'segments') {
-    const [year, month, day] = String(profile.birthday || '').split('-');
-    fillContentEditableSegment(birthdayField.yearSegment, year || '2000');
-    fillContentEditableSegment(birthdayField.monthSegment, String(Math.max(1, Number(month) || 1)));
-    fillContentEditableSegment(birthdayField.daySegment, String(Math.max(1, Number(day) || 1)));
-    // Also try to set the hidden input value when present (some variants validate against it).
+    const { year, month, day } = resolveBirthdayParts(profile.birthday);
+    fillContentEditableSegment(birthdayField.yearSegment, year);
+    fillContentEditableSegment(birthdayField.monthSegment, String(Number(month)));
+    fillContentEditableSegment(birthdayField.daySegment, String(Number(day)));
+
+    // If the hidden field exists but stays empty, fall back to setting it just before submit.
     const hiddenBirthday = document.querySelector('input[name="birthday"][type="hidden"]');
     if (hiddenBirthday) {
       try {
-        utils.setInputValue(hiddenBirthday, `${year || '2000'}-${String(month || '1').padStart(2, '0')}-${String(day || '1').padStart(2, '0')}`);
+        await utils.sleep(100);
+        if (!String(hiddenBirthday.value || '').trim()) {
+          utils.setInputValue(hiddenBirthday, `${year}-${month}-${day}`);
+        }
       } catch {}
     }
     utils.log(`步骤 5：生日已填写：${profile.birthday}`);
   } else if (birthdayField?.input) {
-    utils.setInputValue(birthdayField.input, profile.birthday);
+    const { year, month, day } = resolveBirthdayParts(profile.birthday);
+    const inputType = String(birthdayField.input.type || '').toLowerCase();
+    const visibleValue = inputType === 'date'
+      ? `${year}-${month}-${day}`
+      : `${year}/${month}/${day}`;
+
+    utils.setInputValue(birthdayField.input, visibleValue);
+    try {
+      birthdayField.input.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+    } catch {}
+
+    // Some layouts also include a hidden birthday input in the form; keep it in ISO to satisfy backends.
+    const hiddenBirthday = document.querySelector('input[name="birthday"][type="hidden"]');
+    if (hiddenBirthday) {
+      try {
+        utils.setInputValue(hiddenBirthday, `${year}-${month}-${day}`);
+      } catch {}
+    }
+
     utils.log(`步骤 5：生日已填写：${profile.birthday}`);
   } else {
     throw new Error(`步骤 5：未找到可填写的年龄或生日字段。URL: ${location.href}`);
