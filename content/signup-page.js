@@ -110,12 +110,19 @@ function findAuthErrorRetryTrigger({ allowDisabled = false } = {}) {
 function maybeThrowAuthRetryErrorPage(step = '') {
   const trigger = findAuthErrorRetryTrigger({ allowDisabled: true });
   if (!trigger) return;
-  if (isActionEnabled(trigger)) {
+  const enabled = isActionEnabled(trigger);
+  if (enabled) {
     utils.clickElement(trigger);
+  } else {
+    // Some error pages render the Retry button disabled briefly; force a reload to get unstuck.
+    try {
+      location.reload();
+    } catch {}
   }
   const prefix = '[AUTH_ERROR_SCREEN:retry_page]';
   const stepLabel = step ? `步骤 ${step}：` : '';
-  throw new Error(`${stepLabel}${prefix} 检测到错误页（Operation timed out / 重试）。URL: ${location.href}`);
+  const actionText = enabled ? '已点击重试' : '重试按钮不可用，已触发刷新';
+  throw new Error(`${stepLabel}${prefix} 检测到错误页（Operation timed out / 重试），${actionText}。URL: ${location.href}`);
 }
 
 function getBlockingVerificationWaitErrorText() {
@@ -392,6 +399,7 @@ async function waitForCodeSubmitOutcome(step, timeout = 8000) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeout) {
+    maybeThrowAuthRetryErrorPage(step);
     const errorText = getVerificationCodeErrorText();
     if (errorText) {
       return { invalidCode: true, errorText };
@@ -419,6 +427,7 @@ async function waitForStep5SubmitOutcome(timeout = 15000) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeout) {
+    maybeThrowAuthRetryErrorPage(5);
     const errorText = getStep5ErrorText();
     if (errorText) {
       return { invalidProfile: true, errorText };
@@ -613,6 +622,7 @@ async function detectExistingAccountLoginFlow(payload, timeout = 8000) {
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeout) {
+    maybeThrowAuthRetryErrorPage(3);
     if (isLoginFlowPageReady()) {
       return switchStep3ToLoginFlow(payload, 'existing_account');
     }
@@ -634,6 +644,7 @@ async function recoverSignupFlowFromLoginPage(timeout = 8000) {
   let clickAttempts = 0;
 
   while (Date.now() - startedAt < timeout) {
+    maybeThrowAuthRetryErrorPage(3);
     if (isSignupIdentifierPageReady() || isSignupPasswordCreationPageReady()) {
       return true;
     }
@@ -735,6 +746,7 @@ async function completeStep3AsRegisteredAccount(payload, errorText = '') {
   // Wait until we are truly on login flow; Step 6 requires login identifiers.
   const startedAt = Date.now();
   while (Date.now() - startedAt < 10000) {
+    maybeThrowAuthRetryErrorPage(3);
     if (isLoginFlowPageReady()) {
       return switchStep3ToLoginFlow(payload, 'existing_account');
     }
@@ -804,6 +816,7 @@ async function step2OpenSignup() {
   let clickAttempts = 0;
   let redirectAttempted = false;
   while (Date.now() - startedAt < 8000) {
+    maybeThrowAuthRetryErrorPage(2);
     if (isStep8Ready()) {
       await clearPendingSignupStep();
       utils.log('步骤 2：页面已提前进入 OAuth 授权页，后续将直接进入步骤 8。', 'warn');
@@ -930,6 +943,7 @@ async function finishStep3OnPasswordPage(payload) {
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < 6000) {
+    maybeThrowAuthRetryErrorPage(3);
     if (isStep8Ready()) {
       await clearPendingSignupStep();
       utils.log('步骤 3：页面已提前进入 OAuth 授权页，后续将直接进入步骤 8。', 'warn');
@@ -1137,6 +1151,7 @@ async function step6Login(payload) {
   let oneTimeCodeRequestedAt = '';
   let passwordSubmitAt = '';
   while (Date.now() - startedAt < 5000) {
+    maybeThrowAuthRetryErrorPage(6);
     passwordInput = document.querySelector('input[type="password"]');
     const oneTimeCodeTrigger = findOneTimeCodeLoginTrigger();
     const path = (globalThis.HotmailRegisterLoginStrategy?.chooseStep6LoginPath || (() => 'wait'))({
@@ -1245,6 +1260,7 @@ async function prepareLoginCodeFlow(timeout = 15000) {
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeout) {
+    maybeThrowAuthRetryErrorPage(6);
     const codeInput = helpers.getCodeInput();
     if (codeInput) {
       return { ready: true, mode: 'code_input' };
@@ -1301,6 +1317,7 @@ async function resendVerificationCode(step, timeout = 45000) {
   let loggedWaiting = false;
 
   while (Date.now() - startedAt < timeout) {
+    maybeThrowAuthRetryErrorPage(step);
     const action = findResendVerificationCodeTrigger({ allowDisabled: true });
     if (action && isActionEnabled(action)) {
       utils.log(`步骤 ${step}：重新发送验证码按钮已可用。`);
