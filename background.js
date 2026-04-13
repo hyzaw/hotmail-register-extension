@@ -16,11 +16,15 @@ import { createLuckmailClient } from './shared/luckmail-client.js';
 import { resolveLoginPassword } from './shared/login-password.js';
 import { createContentStepSignalRegistry, settleStepWaiterFromDispatchResult } from './shared/content-step-signals.js';
 import { chooseOauthTabCandidate, listAuthTabIds } from './shared/open-oauth-target.js';
-import { createManagementApiClient, resolveManagementPanelUrl } from './shared/management-api-client.js';
+import { createManagementApiClient } from './shared/management-api-client.js';
 import { pollManagementAuthStatus } from './shared/management-auth-status.js';
 import { findCompletedLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
+import {
+  clearPendingSignupStepForTab,
+  getPendingSignupStepForTab,
+  setPendingSignupStepForTab,
+} from './shared/pending-signup-step-store.js';
 import { decideOauthTabNavigation } from './shared/oauth-tab-navigation.js';
-import { buildPanelTabOpenPlan } from './shared/panel-tab-plan.js';
 import { decideStep8ClickPlan } from './shared/step8-click-plan.js';
 import { pollVerificationCode } from './shared/verification-poller.js';
 import { createReadyCommandQueue } from './shared/ready-command-queue.js';
@@ -72,6 +76,7 @@ async function resetTransientRuntime() {
     selectedAccountAddress: '',
     currentAccount: null,
     currentEmailRecord: null,
+    pendingSignupSteps: {},
     authTabId: null,
     managementOauthState: '',
     localhostUrl: '',
@@ -283,6 +288,25 @@ function buildClient(settings) {
   });
 }
 
+async function savePendingSignupStep(tabId, payload) {
+  const runtime = await getRuntime();
+  await setRuntime({
+    pendingSignupSteps: setPendingSignupStepForTab(runtime.pendingSignupSteps || {}, tabId, payload),
+  });
+}
+
+async function readPendingSignupStep(tabId) {
+  const runtime = await getRuntime();
+  return getPendingSignupStepForTab(runtime.pendingSignupSteps || {}, tabId);
+}
+
+async function clearPendingSignupStep(tabId) {
+  const runtime = await getRuntime();
+  await setRuntime({
+    pendingSignupSteps: clearPendingSignupStepForTab(runtime.pendingSignupSteps || {}, tabId),
+  });
+}
+
 async function resetAuthAttemptRuntime() {
   await setRuntime({
     authTabId: null,
@@ -300,46 +324,6 @@ function buildManagementClient(settings) {
     baseUrl: settings.vpsUrl,
     managementKey: settings.vpsPassword,
   });
-}
-
-function isManagementApiAccessDeniedError(error) {
-  const message = String(error?.message || error || '');
-  return /ERR_ACCESS_DENIED|The requested URL could not be retrieved|Access control configuration prevents your request from being allowed|<title>ERROR:\s*The requested URL could not be retrieved<\/title>|<b>Access Denied\.<\/b>/i.test(message);
-}
-
-async function executeVpsPanelStep(step, state, payload = {}, {
-  preserveExistingTab = false,
-  timeoutMs = 45000,
-} = {}) {
-  const managementPageUrl = resolveManagementPanelUrl(state.vpsUrl);
-  const tabId = await openOrReusePanelTab(
-    'vps-panel',
-    managementPageUrl,
-    [
-      'content/utils.js',
-      'shared/oauth-step-helpers-runtime.js',
-      'shared/step9-status.js',
-      'content/vps-panel.js',
-    ],
-    { preserveExistingTab }
-  );
-
-  const waitForPageStep = contentStepSignals.waitForStep(step, timeoutMs);
-  void sendToReadySource('vps-panel', tabId, {
-    type: 'EXECUTE_STEP',
-    step,
-    payload,
-  }, timeoutMs).then((dispatchResult) => {
-    settleStepWaiterFromDispatchResult(contentStepSignals, step, dispatchResult, {
-      allowDirectSuccess: false,
-    });
-  }).catch((error) => {
-    if (!isMissingReceiverError(error)) {
-      contentStepSignals.rejectStep(step, error);
-    }
-  });
-
-  return waitForPageStep;
 }
 
 function getSelectedAccountAddress(state = {}) {
@@ -604,62 +588,6 @@ async function resetAuthEnvironmentForNextAccount() {
   await resetAuthAttemptRuntime();
   await clearAuthBrowsingData();
   return { closedAuthTabs };
-}
-
-async function openOrReusePanelTab(source, url, files, options = {}) {
-  if (!url) {
-    throw new Error('缺少面板地址');
-  }
-
-  const tabs = await chrome.tabs.query({});
-  const existing = tabs.find((tab) => tab.url && tab.url.startsWith(url));
-  const plan = buildPanelTabOpenPlan({
-    existingTab: existing || null,
-    targetUrl: url,
-    preserveExistingTab: Boolean(options.preserveExistingTab),
-  });
-
-  let tab = null;
-  if (plan.action === 'activate' && plan.tabId) {
-    tab = await chrome.tabs.update(plan.tabId, { active: true });
-  } else if (plan.action === 'reload' && plan.tabId) {
-    await chrome.tabs.update(plan.tabId, { active: true });
-    await chrome.tabs.reload(plan.tabId, { bypassCache: true });
-    tab = await chrome.tabs.get(plan.tabId);
-  } else if (plan.action === 'update' && plan.tabId) {
-    tab = await chrome.tabs.update(plan.tabId, { url: plan.url, active: true });
-  } else {
-    tab = await chrome.tabs.create({ url, active: true });
-  }
-
-  if (options.preserveExistingTab && plan.action === 'activate' && readyCommandQueue.isReadyForTab(source, tab.id)) {
-    return tab.id;
-  }
-
-  await waitForTabCompleteIfNeeded(tab.id, plan.waitForComplete, 30000);
-  readyCommandQueue.markPending(source, tab.id);
-
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (injectedSource) => {
-      window.__HOTMAIL_REGISTER_SOURCE = injectedSource;
-    },
-    args: [source],
-  });
-
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files,
-  });
-
-  return tab.id;
-}
-
-async function sendToReadySource(source, tabId, message, timeoutMs = 15000) {
-  if (readyCommandQueue.isReady(source)) {
-    return chrome.tabs.sendMessage(tabId, message);
-  }
-  return readyCommandQueue.queueCommand(source, message, timeoutMs);
 }
 
 async function syncCurrentAccount(state) {
@@ -1052,35 +980,14 @@ const handlers = {
       throw new Error('请先填写管理地址');
     }
     return runManagedStep(1, async () => {
-      let result = null;
-      try {
-        const client = buildManagementClient(state);
-        result = await client.getCodexAuthUrl({ isWebUi: true });
-      } catch (error) {
-        if (!isManagementApiAccessDeniedError(error)) {
-          throw error;
-        }
-
-        await addLog('步骤 1：管理 API 请求被代理拦截，回退到 CPA 页面获取 OAuth 链接...', 'warn');
-        const pageResult = await executeVpsPanelStep(1, state, {
-          vpsPassword: state.vpsPassword,
-        });
-        result = {
-          url: pageResult?.oauthUrl || '',
-          state: '',
-        };
-      }
-
+      const client = buildManagementClient(state);
+      const result = await client.getCodexAuthUrl({ isWebUi: true });
       await setSettings({ oauthUrl: result.url });
       await setRuntime({
         managementOauthState: result.state,
         localhostUrl: '',
       });
-      if (result.state) {
-        await addLog(`步骤 1：管理 API 已返回 OAuth state=${result.state}`, 'info');
-      } else {
-        await addLog('步骤 1：已通过 CPA 页面拿到 OAuth 链接，本轮后续将改走 CPA 页面校验。', 'warn');
-      }
+      await addLog(`步骤 1：管理 API 已返回 OAuth state=${result.state}`, 'info');
       return {
         oauthUrl: result.url,
         oauthState: result.state,
@@ -1298,52 +1205,29 @@ const handlers = {
   },
   async EXECUTE_FINAL_VERIFY_STEP() {
     const state = await getState();
+    if (!state.managementOauthState) {
+      throw new Error('缺少 OAuth state，请先重新执行步骤 1。');
+    }
     if (!state.vpsUrl) {
       throw new Error('请先填写管理地址');
     }
     return runManagedStep(9, async () => {
-      if (!state.managementOauthState) {
-        await addLog('步骤 9：当前没有 OAuth state，直接回退到 CPA 页面校验。', 'warn');
-        return executeVpsPanelStep(9, state, {
-          vpsPassword: state.vpsPassword,
-          localhostUrl: state.localhostUrl,
-        }, {
-          preserveExistingTab: true,
-          timeoutMs: 60000,
-        });
-      }
-
-      try {
-        const client = buildManagementClient(state);
-        const result = await pollManagementAuthStatus({
-          state: state.managementOauthState,
-          timeoutMs: 30000,
-          intervalMs: 1000,
-          getAuthStatus: ({ state: oauthState }) => client.getAuthStatus({ state: oauthState }),
-          onWait: async ({ attempt }) => {
-            if (attempt === 1 || attempt % 5 === 0) {
-              await addLog(`步骤 9：管理 API 仍在等待 OAuth 完成，state=${state.managementOauthState}，第 ${attempt} 次轮询`, 'info');
-            }
-          },
-        });
-        return {
-          oauthState: state.managementOauthState,
-          verifiedStatus: result.status || 'ok',
-        };
-      } catch (error) {
-        if (!isManagementApiAccessDeniedError(error)) {
-          throw error;
-        }
-
-        await addLog('步骤 9：管理 API 轮询被代理拦截，回退到 CPA 页面校验...', 'warn');
-        return executeVpsPanelStep(9, state, {
-          vpsPassword: state.vpsPassword,
-          localhostUrl: state.localhostUrl,
-        }, {
-          preserveExistingTab: true,
-          timeoutMs: 60000,
-        });
-      }
+      const client = buildManagementClient(state);
+      const result = await pollManagementAuthStatus({
+        state: state.managementOauthState,
+        timeoutMs: 30000,
+        intervalMs: 1000,
+        getAuthStatus: ({ state: oauthState }) => client.getAuthStatus({ state: oauthState }),
+        onWait: async ({ attempt }) => {
+          if (attempt === 1 || attempt % 5 === 0) {
+            await addLog(`步骤 9：管理 API 仍在等待 OAuth 完成，state=${state.managementOauthState}，第 ${attempt} 次轮询`, 'info');
+          }
+        },
+      });
+      return {
+        oauthState: state.managementOauthState,
+        verifiedStatus: result.status || 'ok',
+      };
     }, {
       startMessage: '步骤 9：正在校验 OAuth 状态...',
       successMessage: '步骤 9：OAuth 状态校验完成',
@@ -1445,22 +1329,15 @@ const handlers = {
             ).trim();
             let submittedToManagementApi = false;
             if (oauthState) {
-              try {
-                const client = buildManagementClient(latestState);
-                await client.submitOAuthCallback({
-                  provider: 'codex',
-                  redirectUrl: matchedUrl,
-                  state: oauthState,
-                });
-                submittedToManagementApi = true;
-              } catch (error) {
-                if (!isManagementApiAccessDeniedError(error)) {
-                  throw error;
-                }
-                await addLog('步骤 8：管理 API 提交回调被代理拦截，已保留 localhost 链接，后续转 CPA 页面校验。', 'warn');
-              }
+              const client = buildManagementClient(latestState);
+              await client.submitOAuthCallback({
+                provider: 'codex',
+                redirectUrl: matchedUrl,
+                state: oauthState,
+              });
+              submittedToManagementApi = true;
             } else {
-              await addLog('步骤 8：当前没有 OAuth state，已保留 localhost 链接，后续转 CPA 页面校验。', 'warn');
+              throw new Error('步骤 8：缺少 OAuth state，无法向管理 API 提交回调。');
             }
 
             settled = true;
@@ -1667,6 +1544,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'STEP_COMPLETE') {
     Promise.all([
       setStepStatus(message.step, 'completed'),
+      (message.step === 2 || message.step === 3) && _sender?.tab?.id
+        ? clearPendingSignupStep(_sender.tab.id)
+        : Promise.resolve(),
       message.payload?.localhostUrl ? setRuntime({ localhostUrl: message.payload.localhostUrl }) : Promise.resolve(),
       addLog(`页面内步骤 ${message.step} 已完成`, 'ok'),
     ])
@@ -1683,12 +1563,54 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     markErrorLogged(stepError);
     Promise.all([
       setStepStatus(message.step, 'failed'),
+      (message.step === 2 || message.step === 3) && _sender?.tab?.id
+        ? clearPendingSignupStep(_sender.tab.id)
+        : Promise.resolve(),
       addLog(`页面内步骤 ${message.step} 失败：${message.error || '未知错误'}`, 'error'),
     ])
       .then(() => {
         contentStepSignals.rejectStep(message.step, stepError);
         sendResponse({ ok: true, data: true });
       })
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'SET_PENDING_SIGNUP_STEP') {
+    const tabId = _sender?.tab?.id || null;
+    if (!tabId) {
+      sendResponse({ ok: false, error: '当前页面缺少 tabId，无法保存待恢复步骤' });
+      return true;
+    }
+
+    savePendingSignupStep(tabId, message.payload || {})
+      .then(() => sendResponse({ ok: true, data: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'GET_PENDING_SIGNUP_STEP') {
+    const tabId = _sender?.tab?.id || null;
+    if (!tabId) {
+      sendResponse({ ok: true, data: null });
+      return true;
+    }
+
+    readPendingSignupStep(tabId)
+      .then((payload) => sendResponse({ ok: true, data: payload }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'CLEAR_PENDING_SIGNUP_STEP') {
+    const tabId = _sender?.tab?.id || null;
+    if (!tabId) {
+      sendResponse({ ok: true, data: true });
+      return true;
+    }
+
+    clearPendingSignupStep(tabId)
+      .then(() => sendResponse({ ok: true, data: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;
   }

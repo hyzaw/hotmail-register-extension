@@ -38,16 +38,6 @@ export function buildManagementApiUrl(baseUrl, endpointPath, searchParams = {}) 
   return requestUrl.toString();
 }
 
-export function resolveManagementPanelUrl(input = '') {
-  const normalizedBaseUrl = resolveManagementApiBaseUrl(input);
-  const panelUrl = new URL(
-    'management.html',
-    normalizedBaseUrl.endsWith('/') ? normalizedBaseUrl : `${normalizedBaseUrl}/`
-  );
-  panelUrl.hash = '#/oauth';
-  return panelUrl.toString();
-}
-
 async function readResponsePayload(response) {
   const contentType = response.headers?.get?.('content-type') || '';
   if (contentType.includes('application/json')) {

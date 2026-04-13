@@ -24,6 +24,7 @@ export const DEFAULT_RUNTIME = {
   selectedAccountAddress: '',
   currentAccount: null,
   currentEmailRecord: null,
+  pendingSignupSteps: {},
   authTabId: null,
   managementOauthState: '',
   localhostUrl: '',

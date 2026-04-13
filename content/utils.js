@@ -47,6 +47,14 @@ function reportReady() {
   }).catch(() => {});
 }
 
+async function callRuntime(message) {
+  const response = await chrome.runtime.sendMessage(message);
+  if (!response?.ok) {
+    throw new Error(response?.error || '扩展运行时消息失败');
+  }
+  return response.data;
+}
+
 function reportComplete(step, data = {}) {
   log(`步骤 ${step} 已成功完成`, 'ok');
   chrome.runtime.sendMessage({
@@ -291,9 +299,11 @@ async function humanPause(min = 250, max = 850) {
 }
 
 globalThis.HotmailRegisterUtils = {
+  clearPendingSignupStep: async () => callRuntime({ type: 'CLEAR_PENDING_SIGNUP_STEP' }),
   clickElement: simulateClick,
   fillInput,
   fillSelect,
+  getPendingSignupStep: async () => callRuntime({ type: 'GET_PENDING_SIGNUP_STEP' }),
   humanPause,
   isStopError,
   isVisible,
@@ -302,6 +312,7 @@ globalThis.HotmailRegisterUtils = {
   reportError,
   reportReady,
   resetStopState,
+  setPendingSignupStep: async (payload) => callRuntime({ type: 'SET_PENDING_SIGNUP_STEP', payload }),
   setInputValue: fillInput,
   simulateClick,
   sleep,
