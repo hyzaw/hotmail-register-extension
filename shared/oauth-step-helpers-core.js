@@ -196,7 +196,7 @@ export function shouldTreatPasswordPageAsSignup({ url = '', text = '', hasPasswo
 }
 
 export function isExistingAccountSignalText(text) {
-  return /account\s+associated\s+with\s+this\s+email\s+address\s+already\s+exists|email\s+address.*already\s+exists|this\s+email\s+address\s+is\s+already\s+in\s+use|该电子邮件地址已被使用|该邮箱已被使用|账户已存在|帐户已存在/i.test(normalizeInlineText(text));
+  return /account\s+associated\s+with\s+this\s+email\s+address\s+already\s+exists|email\s+address.*already\s+exists|this\s+email\s+address\s+is\s+already\s+in\s+use|与此电子邮件地址相关联的帐户已存在|与此电子邮件地址相关联的账户已存在|该电子邮件地址已被使用|该邮箱已被使用|账户已存在|帐户已存在/i.test(normalizeInlineText(text));
 }
 
 export function shouldTreatLoginFlowAsExistingAccount({ url = '', text = '', hasLoginAction = false } = {}) {

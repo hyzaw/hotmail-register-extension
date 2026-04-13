@@ -515,6 +515,49 @@ function findSignupEntryAction() {
   }) || null;
 }
 
+function getExistingAccountErrorText() {
+  const messages = [];
+  const selectors = [
+    '.react-aria-FieldError',
+    '[slot="errorMessage"]',
+    '[id$="-error"]',
+    '[id$="-errors"]',
+    '[role="alert"]',
+    '[aria-live="assertive"]',
+    '[aria-live="polite"]',
+    '[class*="error"]',
+  ];
+
+  for (const selector of selectors) {
+    document.querySelectorAll(selector).forEach((element) => {
+      if (!isVisibleElement(element)) return;
+      const text = helpers.normalizeInlineText?.(element.textContent || '') || getActionText(element);
+      if (text) {
+        messages.push(text);
+      }
+    });
+  }
+
+  const pageText = helpers.normalizeInlineText?.(getPageTextSnapshot()) || '';
+  if (pageText) {
+    messages.push(pageText);
+  }
+
+  return messages.find((text) => helpers.isExistingAccountSignalText?.(text)) || '';
+}
+
+function completeStep3AsRegisteredAccount(payload, errorText = '') {
+  clearPendingSignupStep();
+  const suffix = errorText ? `。详情：${errorText}` : '';
+  utils.log(`步骤 3：检测到当前邮箱已注册，当前账号将跳过后续注册流程并标记为已注册${suffix}`, 'warn');
+  utils.reportComplete(3, {
+    address: payload.address,
+    markAccountRegistered: true,
+    existingAccountOnSignup: true,
+  });
+  return { ok: true, markAccountRegistered: true, existingAccountOnSignup: true };
+}
+
 function getPrimaryContinueButton() {
   const actionCandidates = document.querySelectorAll('button, [role="button"], input[type="submit"]');
   const consentUrl = helpers.isOAuthConsentUrl(location.href);
@@ -613,15 +656,34 @@ async function step2OpenSignup() {
 async function finishStep3OnPasswordPage(payload) {
   const passwordInput = await utils.waitForElement('input[type="password"], input[name="password"]', 15000);
   if (!isSignupPasswordCreationPageReady()) {
-    if (await recoverSignupFlowFromLoginPage()) {
+    const existingAccountErrorOnPasswordPage = getExistingAccountErrorText();
+    if (existingAccountErrorOnPasswordPage) {
+      return completeStep3AsRegisteredAccount(payload, existingAccountErrorOnPasswordPage);
+    }
+
+    const pageText = getPageTextSnapshot();
+    const loginAction = findLoginAction();
+    const shouldKeepPasswordPageForSignup = Boolean(
+      passwordInput
+      && isVisibleElement(passwordInput)
+      && !helpers.shouldTreatLoginFlowAsExistingAccount?.({
+        url: location.href,
+        text: pageText,
+        hasLoginAction: Boolean(loginAction),
+      })
+    );
+    if (shouldKeepPasswordPageForSignup) {
+      utils.log('步骤 3：已出现可填写密码框，且未检测到“账号已存在”信号，继续按注册密码页处理。', 'warn');
+    } else if (await recoverSignupFlowFromLoginPage()) {
       if (isSignupIdentifierPageReady() && !isSignupPasswordCreationPageReady()) {
         utils.log('步骤 3：已从登录页切回注册入口页，准备重新填写邮箱...', 'warn');
         return step3FillCredentials(payload);
       }
       utils.log('步骤 3：已从登录页切回注册密码页，继续填写密码...', 'warn');
       return finishStep3OnPasswordPage(payload);
+    } else {
+      throw new Error(`当前进入了登录页，不是注册密码页。URL: ${location.href}`);
     }
-    throw new Error(`当前进入了登录页，不是注册密码页。URL: ${location.href}`);
   }
 
   const resolvedPassword = String(payload.password || '').trim();
@@ -634,6 +696,11 @@ async function finishStep3OnPasswordPage(payload) {
 
   utils.setInputValue(passwordInput, resolvedPassword);
   utils.log('步骤 3：密码已填写');
+
+  const existingAccountErrorBeforeSubmit = getExistingAccountErrorText();
+  if (existingAccountErrorBeforeSubmit) {
+    return completeStep3AsRegisteredAccount(payload, existingAccountErrorBeforeSubmit);
+  }
 
   const submitButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
   if (submitButton) {
@@ -671,6 +738,10 @@ async function finishStep3OnPasswordPage(payload) {
     if (isSignupPasswordCreationPageReady() && passwordErrorText) {
       clearPendingSignupStep();
       throw new Error(`步骤 3：注册密码不符合页面规则，请检查默认登录密码设置。详情：${passwordErrorText}`);
+    }
+    const existingAccountErrorText = getExistingAccountErrorText();
+    if (existingAccountErrorText) {
+      return completeStep3AsRegisteredAccount(payload, existingAccountErrorText);
     }
     await utils.sleep(200);
   }

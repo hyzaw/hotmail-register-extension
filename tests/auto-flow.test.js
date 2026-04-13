@@ -209,6 +209,59 @@ test('runSingleAutoFlow jumps to login flow when step 3 detects existing account
   ]);
 });
 
+test('runSingleAutoFlow marks account completed immediately when signup password page reports existing account', async () => {
+  const calls = [];
+
+  const result = await runSingleAutoFlow({
+    autoImport: false,
+    actions: {
+      async prepareNextAccount() {
+        calls.push('prepareNextAccount');
+        return { address: 'user@hotmail.com' };
+      },
+      async refreshOauthFromVps() {
+        calls.push('refreshOauthFromVps');
+      },
+      async findCurrentEmailRecord() {
+        calls.push('findCurrentEmailRecord');
+        return { id: 1, address: 'user@hotmail.com' };
+      },
+      async openOauthUrl() {
+        calls.push('openOauthUrl');
+      },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+        if (step === 3) {
+          return { markAccountRegistered: true, existingAccountOnSignup: true };
+        }
+      },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) {
+        calls.push(`log:${message}`);
+      },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(calls, [
+    'prepareNextAccount',
+    'log:单轮自动流程开始',
+    'log:阶段 1：刷新 CPA 并重新获取 OAuth 链接',
+    'refreshOauthFromVps',
+    'findCurrentEmailRecord',
+    'log:阶段 2：打开认证页面并进入注册流程',
+    'openOauthUrl',
+    'executeSignupStep:2',
+    'executeSignupStep:3',
+    'log:步骤 3：检测到当前邮箱已存在关联账号，当前账号将直接标记为已注册并跳过后续流程',
+    'completeCurrentAccount',
+    'log:单轮自动流程完成，当前邮箱已标记为已使用',
+  ]);
+});
+
 test('runSingleAutoFlow skips login verification when step 6 completes without OTP', async () => {
   const calls = [];
 

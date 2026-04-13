@@ -19,6 +19,13 @@ async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSi
   return { needsProfileCompletion: false };
 }
 
+async function completeRegisteredAccountAfterStep3({ addLog, completeCurrentAccount } = {}) {
+  await addLog('步骤 3：检测到当前邮箱已存在关联账号，当前账号将直接标记为已注册并跳过后续流程');
+  const result = await completeCurrentAccount();
+  await addLog('单轮自动流程完成，当前邮箱已标记为已使用');
+  return result;
+}
+
 export async function runSingleAutoFlow({ actions = {} } = {}) {
   const {
     addLog = async () => {},
@@ -52,6 +59,10 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
   const signupStep3Result = await executeSignupStep(3);
   const skipSignupVerification = Boolean(signupStep3Result?.skipSignupVerification);
   const switchToLoginFlow = Boolean(signupStep3Result?.switchToLoginFlow);
+  const markAccountRegistered = Boolean(signupStep3Result?.markAccountRegistered);
+  if (markAccountRegistered) {
+    return completeRegisteredAccountAfterStep3({ addLog, completeCurrentAccount });
+  }
   if (switchToLoginFlow) {
     const loginResult = await continueFromLoginAfterStep3({
       addLog,
@@ -171,6 +182,9 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
   if (startStep <= 3) {
     await checkAutoControl();
     const signupStep3Result = await executeSignupStep(3);
+    if (signupStep3Result?.markAccountRegistered) {
+      return completeRegisteredAccountAfterStep3({ addLog, completeCurrentAccount });
+    }
     if (signupStep3Result?.switchToLoginFlow) {
       const loginResult = await continueFromLoginAfterStep3({
         addLog,

@@ -171,6 +171,7 @@ test('isEmailVerificationUrl matches verification routes only', () => {
 test('isExistingAccountSignalText only matches explicit account-exists errors', () => {
   assert.equal(isExistingAccountSignalText('Account associated with this email address already exists'), true);
   assert.equal(isExistingAccountSignalText('This email address is already in use'), true);
+  assert.equal(isExistingAccountSignalText('与此电子邮件地址相关联的帐户已存在'), true);
   assert.equal(isExistingAccountSignalText('Already have an account? Log in'), false);
 });
 
