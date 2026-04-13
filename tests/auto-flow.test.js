@@ -398,7 +398,7 @@ test('runSingleAutoFlow skips login verification when step 6 completes without O
 
 test('runSingleAutoFlow returns to step 5 when step 6 lands on the profile page', async () => {
   const calls = [];
-  let profilePass = 0;
+  let loginPass = 0;
 
   const result = await runSingleAutoFlow({
     autoImport: false,
@@ -420,13 +420,11 @@ test('runSingleAutoFlow returns to step 5 when step 6 lands on the profile page'
       async executeSignupStep(step) {
         calls.push(`executeSignupStep:${step}`);
         if (step === 6) {
-          return { needsProfileCompletion: true };
-        }
-        if (step === 5) {
-          profilePass += 1;
-          if (profilePass === 2) {
-            return { needsOTP: false };
+          loginPass += 1;
+          if (loginPass === 1) {
+            return { needsProfileCompletion: true };
           }
+          return { needsOTP: false };
         }
       },
       async executeFinalVerifyStep() {
@@ -466,7 +464,8 @@ test('runSingleAutoFlow returns to step 5 when step 6 lands on the profile page'
     'executeSignupStep:6',
     'log:步骤 6：检测到资料页，返回步骤 5 补全资料',
     'executeSignupStep:5',
-    'log:步骤 6：资料页已补全，直接进入授权阶段',
+    'executeSignupStep:6',
+    'log:步骤 6：已通过密码登录，跳过登录验证码阶段',
     'executeSignupStep:8',
     'executeFinalVerifyStep',
     'completeCurrentAccount',
@@ -476,7 +475,7 @@ test('runSingleAutoFlow returns to step 5 when step 6 lands on the profile page'
 
 test('runSingleAutoFlow returns to step 5 when step 7 lands on the profile page', async () => {
   const calls = [];
-  let profilePass = 0;
+  let loginPass = 0;
 
   const result = await runSingleAutoFlow({
     autoImport: false,
@@ -498,13 +497,11 @@ test('runSingleAutoFlow returns to step 5 when step 7 lands on the profile page'
       async executeSignupStep(step) {
         calls.push(`executeSignupStep:${step}`);
         if (step === 6) {
-          return { needsOTP: true };
-        }
-        if (step === 5) {
-          profilePass += 1;
-          if (profilePass === 2) {
-            return { reachedConsent: true };
+          loginPass += 1;
+          if (loginPass === 1) {
+            return { needsOTP: true };
           }
+          return { reachedConsent: true };
         }
       },
       async executeFinalVerifyStep() {
@@ -549,6 +546,7 @@ test('runSingleAutoFlow returns to step 5 when step 7 lands on the profile page'
     'fillLastCode:login',
     'log:步骤 7：检测到资料页，返回步骤 5 补全资料',
     'executeSignupStep:5',
+    'executeSignupStep:6',
     'log:检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。',
     'executeSignupStep:8',
     'executeFinalVerifyStep',
