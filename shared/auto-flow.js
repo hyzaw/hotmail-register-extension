@@ -234,9 +234,22 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
       completeCurrentAccount,
     });
   }
-  const skipSignupVerification = Boolean(signupStep3Result?.skipSignupVerification);
+  let skipSignupVerification = Boolean(signupStep3Result?.skipSignupVerification);
+  let skipSignupVerificationViaUrlProbe = false;
   const switchToLoginFlow = Boolean(signupStep3Result?.switchToLoginFlow);
   const markAccountRegistered = Boolean(signupStep3Result?.markAccountRegistered);
+
+  // Guard: if the tab already landed on /about-you, do not start polling signup OTP (it may never have been sent).
+  if (!skipSignupVerification && !switchToLoginFlow && !markAccountRegistered && typeof actions.getAuthTabUrl === 'function') {
+    try {
+      const currentUrl = String(await actions.getAuthTabUrl() || '');
+      if (/\/about-you(?:[/?#]|$)/i.test(currentUrl)) {
+        skipSignupVerification = true;
+        skipSignupVerificationViaUrlProbe = true;
+        await addLog('步骤 3：检测到已落到 about-you 资料页（URL 探测），跳过注册码阶段', 'warn');
+      }
+    } catch {}
+  }
   if (switchToLoginFlow || markAccountRegistered) {
     if (markAccountRegistered && !switchToLoginFlow) {
       await addLog('步骤 3：检测到当前邮箱已存在关联账号，改为继续 OAuth 登录流程（不再放弃该账号）');
@@ -269,7 +282,9 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
     }
   } else {
     if (skipSignupVerification) {
-      await addLog('步骤 3：检测到当前邮箱已进入资料页，跳过注册码阶段');
+      if (!skipSignupVerificationViaUrlProbe) {
+        await addLog('步骤 3：检测到当前邮箱已进入资料页，跳过注册码阶段');
+      }
     } else {
       await checkAutoControl();
       await pollVerificationCode('signup');
@@ -407,6 +422,18 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
         completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
       });
     }
+    let skipSignupVerification = Boolean(signupStep3Result?.skipSignupVerification);
+    let skipSignupVerificationViaUrlProbe = false;
+    if (!skipSignupVerification && !signupStep3Result?.switchToLoginFlow && !signupStep3Result?.markAccountRegistered && typeof actions.getAuthTabUrl === 'function') {
+      try {
+        const currentUrl = String(await actions.getAuthTabUrl() || '');
+        if (/\/about-you(?:[/?#]|$)/i.test(currentUrl)) {
+          skipSignupVerification = true;
+          skipSignupVerificationViaUrlProbe = true;
+          await addLog('步骤 3：检测到已落到 about-you 资料页（URL 探测），跳过注册码阶段', 'warn');
+        }
+      } catch {}
+    }
     if (signupStep3Result?.switchToLoginFlow || signupStep3Result?.markAccountRegistered) {
       if (signupStep3Result?.markAccountRegistered && !signupStep3Result?.switchToLoginFlow) {
         await addLog('步骤 3：检测到当前邮箱已注册，改为继续 OAuth 登录流程（不再放弃该账号）');
@@ -454,9 +481,11 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
       await checkAutoControl();
       const result = await completeCurrentAccount();
       await addLog('自动流程继续完成，当前邮箱已标记为已使用');
-      return result;
-    } else if (signupStep3Result?.skipSignupVerification) {
-      await addLog('步骤 3：检测到当前邮箱已进入资料页，跳过注册码阶段');
+       return result;
+    } else if (skipSignupVerification) {
+      if (!skipSignupVerificationViaUrlProbe) {
+        await addLog('步骤 3：检测到当前邮箱已进入资料页，跳过注册码阶段');
+      }
     } else {
       await checkAutoControl();
       await pollVerificationCode('signup');
@@ -474,19 +503,58 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
       }
     }
   } else if (startStep === 4) {
-    await checkAutoControl();
-    await pollVerificationCode('signup');
-    await checkAutoControl();
-    const signupCodeResult = await fillLastCode('signup');
-    if (hasReachedConsent(signupCodeResult)) {
-      return finalizeFromConsent({
-        addLog,
-        checkAutoControl,
-        executeSignupStep,
-        executeFinalVerifyStep,
-        completeCurrentAccount,
-        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
-      });
+    if (typeof actions.getAuthTabUrl === 'function') {
+      try {
+        const currentUrl = String(await actions.getAuthTabUrl() || '');
+        if (/\/about-you(?:[/?#]|$)/i.test(currentUrl)) {
+          await addLog('步骤 4：检测到已落到 about-you 资料页（URL 探测），跳过注册码阶段', 'warn');
+        } else {
+          await checkAutoControl();
+          await pollVerificationCode('signup');
+          await checkAutoControl();
+          const signupCodeResult = await fillLastCode('signup');
+          if (hasReachedConsent(signupCodeResult)) {
+            return finalizeFromConsent({
+              addLog,
+              checkAutoControl,
+              executeSignupStep,
+              executeFinalVerifyStep,
+              completeCurrentAccount,
+              completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+            });
+          }
+        }
+      } catch {
+        await checkAutoControl();
+        await pollVerificationCode('signup');
+        await checkAutoControl();
+        const signupCodeResult = await fillLastCode('signup');
+        if (hasReachedConsent(signupCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
+      }
+    } else {
+      await checkAutoControl();
+      await pollVerificationCode('signup');
+      await checkAutoControl();
+      const signupCodeResult = await fillLastCode('signup');
+      if (hasReachedConsent(signupCodeResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
     }
   }
 

@@ -138,6 +138,81 @@ test('runSingleAutoFlow skips signup verification when step 3 lands directly on 
   ]);
 });
 
+test('runSingleAutoFlow skips signup verification when the auth tab URL is already /about-you', async () => {
+  const calls = [];
+
+  const result = await runSingleAutoFlow({
+    autoImport: false,
+    actions: {
+      async prepareNextAccount() {
+        calls.push('prepareNextAccount');
+        return { address: 'user@hotmail.com' };
+      },
+      async refreshOauthFromVps() {
+        calls.push('refreshOauthFromVps');
+      },
+      async findCurrentEmailRecord() {
+        calls.push('findCurrentEmailRecord');
+        return { id: 1, address: 'user@hotmail.com' };
+      },
+      async openOauthUrl() {
+        calls.push('openOauthUrl');
+      },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+        if (step === 3) {
+          // Some UI variants land on about-you but still don't explicitly report skipSignupVerification.
+          return { ok: true, verificationRequestedAt: '2026-01-01T00:00:00.000Z' };
+        }
+      },
+      async getAuthTabUrl() {
+        calls.push('getAuthTabUrl');
+        return 'https://auth.openai.com/about-you';
+      },
+      async executeFinalVerifyStep() {
+        calls.push('executeFinalVerifyStep');
+      },
+      async pollVerificationCode(phase) {
+        calls.push(`pollVerificationCode:${phase}`);
+        return { code: '654321' };
+      },
+      async fillLastCode(phase) {
+        calls.push(`fillLastCode:${phase}`);
+      },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) {
+        calls.push(`log:${message}`);
+      },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(calls, [
+    'prepareNextAccount',
+    'log:单轮自动流程开始',
+    'log:阶段 1：刷新 CPA 并重新获取 OAuth 链接',
+    'refreshOauthFromVps',
+    'findCurrentEmailRecord',
+    'log:阶段 2：打开认证页面并进入注册流程',
+    'openOauthUrl',
+    'executeSignupStep:2',
+    'executeSignupStep:3',
+    'getAuthTabUrl',
+    'log:步骤 3：检测到已落到 about-you 资料页（URL 探测），跳过注册码阶段',
+    'executeSignupStep:5',
+    'executeSignupStep:6',
+    'pollVerificationCode:login',
+    'fillLastCode:login',
+    'executeSignupStep:8',
+    'executeFinalVerifyStep',
+    'completeCurrentAccount',
+    'log:单轮自动流程完成，当前邮箱已标记为已使用',
+  ]);
+});
+
 test('runSingleAutoFlow jumps to login flow when step 3 detects existing account login path', async () => {
   const calls = [];
 

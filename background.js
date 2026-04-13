@@ -936,6 +936,10 @@ async function runAutoFlow({ resume = false } = {}) {
             refreshOauthFromVps: handlers.GET_OAUTH_FROM_VPS,
             findCurrentEmailRecord: handlers.FIND_CURRENT_EMAIL_RECORD,
             openOauthUrl: handlers.OPEN_OAUTH_URL,
+            getAuthTabUrl: async () => {
+              const tab = await getActiveAuthTab();
+              return tab?.url || '';
+            },
             executeSignupStep: async (step) => handlers.EXECUTE_SIGNUP_STEP({ step }),
             pollVerificationCode: async (phase) => handlers.POLL_VERIFICATION_CODE({ phase }),
             fillLastCode: async (phase) => handlers.FILL_LAST_CODE({ phase }),
@@ -1241,6 +1245,10 @@ const handlers = {
           refreshOauthFromVps: handlers.GET_OAUTH_FROM_VPS,
           findCurrentEmailRecord: handlers.FIND_CURRENT_EMAIL_RECORD,
           openOauthUrl: handlers.OPEN_OAUTH_URL,
+          getAuthTabUrl: async () => {
+            const tab = await getActiveAuthTab();
+            return tab?.url || '';
+          },
           executeSignupStep: async (step) => handlers.EXECUTE_SIGNUP_STEP({ step }),
           pollVerificationCode: async (phase) => handlers.POLL_VERIFICATION_CODE({ phase }),
           fillLastCode: async (phase) => handlers.FILL_LAST_CODE({ phase }),
@@ -1282,6 +1290,10 @@ const handlers = {
           refreshOauthFromVps: handlers.GET_OAUTH_FROM_VPS,
           findCurrentEmailRecord: handlers.FIND_CURRENT_EMAIL_RECORD,
           openOauthUrl: handlers.OPEN_OAUTH_URL,
+          getAuthTabUrl: async () => {
+            const tab = await getActiveAuthTab();
+            return tab?.url || '';
+          },
           executeSignupStep: async (step) => handlers.EXECUTE_SIGNUP_STEP({ step }),
           pollVerificationCode: async (phase) => handlers.POLL_VERIFICATION_CODE({ phase }),
           fillLastCode: async (phase) => handlers.FILL_LAST_CODE({ phase }),
