@@ -15,6 +15,8 @@ import { createLuckmailClient } from './shared/luckmail-client.js';
 import { resolveLoginPassword } from './shared/login-password.js';
 import { createContentStepSignalRegistry, settleStepWaiterFromDispatchResult } from './shared/content-step-signals.js';
 import { chooseOauthTabCandidate, listAuthTabIds } from './shared/open-oauth-target.js';
+import { createManagementApiClient } from './shared/management-api-client.js';
+import { pollManagementAuthStatus } from './shared/management-auth-status.js';
 import { findLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
 import { decideOauthTabNavigation } from './shared/oauth-tab-navigation.js';
 import { buildPanelTabOpenPlan } from './shared/panel-tab-plan.js';
@@ -70,6 +72,7 @@ async function resetTransientRuntime() {
     currentAccount: null,
     currentEmailRecord: null,
     authTabId: null,
+    managementOauthState: '',
     localhostUrl: '',
     lastSignupCode: '',
     lastLoginCode: '',
@@ -180,7 +183,7 @@ const STEP_TITLES = Object.freeze({
   6: '刷新 OAuth 并登录',
   7: '获取登录验证码',
   8: '确认 OAuth 授权',
-  9: '回填 CPA 校验',
+  9: '管理 API 校验',
 });
 
 function getStepLabel(step) {
@@ -276,6 +279,13 @@ function buildClient(settings) {
     internalClient: settings.mailApiBaseUrl
       ? createInternalSessionClient({ baseUrl: settings.mailApiBaseUrl })
       : null,
+  });
+}
+
+function buildManagementClient(settings) {
+  return createManagementApiClient({
+    baseUrl: settings.vpsUrl,
+    managementKey: settings.vpsPassword,
   });
 }
 
@@ -921,28 +931,24 @@ const handlers = {
   async GET_OAUTH_FROM_VPS() {
     const state = await getState();
     if (!state.vpsUrl) {
-      throw new Error('请先填写 CPA 地址');
+      throw new Error('请先填写管理地址');
     }
     return runManagedStep(1, async () => {
-      const tabId = await openOrReusePanelTab('vps-panel', state.vpsUrl, [
-        'content/utils.js',
-        'shared/oauth-step-helpers-runtime.js',
-        'shared/step9-status.js',
-        'content/vps-panel.js',
-      ]);
-      const result = await sendToReadySource('vps-panel', tabId, {
-        type: 'EXECUTE_STEP',
-        step: 1,
-        payload: { vpsPassword: state.vpsPassword },
-      }, 15000);
-      if (result?.oauthUrl) {
-        await setSettings({ oauthUrl: result.oauthUrl });
-        return { oauthUrl: result.oauthUrl };
-      }
-      return result;
+      const client = buildManagementClient(state);
+      const result = await client.getCodexAuthUrl({ isWebUi: true });
+      await setSettings({ oauthUrl: result.url });
+      await setRuntime({
+        managementOauthState: result.state,
+        localhostUrl: '',
+      });
+      await addLog(`步骤 1：管理 API 已返回 OAuth state=${result.state}`, 'info');
+      return {
+        oauthUrl: result.url,
+        oauthState: result.state,
+      };
     }, {
-      startMessage: '步骤 1：正在从 CPA 面板抓取 OAuth 链接...',
-      successMessage: '步骤 1：已从 CPA 面板获取 OAuth 链接',
+      startMessage: '步骤 1：正在通过管理 API 获取 Codex OAuth 链接...',
+      successMessage: '步骤 1：已通过管理 API 获取 OAuth 链接',
     });
   },
   async PREPARE_NEXT_ACCOUNT() {
@@ -1141,33 +1147,32 @@ const handlers = {
   },
   async EXECUTE_FINAL_VERIFY_STEP() {
     const state = await getState();
-    if (!state.localhostUrl) {
-      throw new Error('缺少 localhost 回调地址，请先完成步骤 8。');
+    if (!state.managementOauthState) {
+      throw new Error('缺少 OAuth state，请先重新执行步骤 1。');
     }
     if (!state.vpsUrl) {
-      throw new Error('请先填写 CPA 地址');
+      throw new Error('请先填写管理地址');
     }
     return runManagedStep(9, async () => {
-      const tabId = await openOrReusePanelTab('vps-panel', state.vpsUrl, [
-        'content/utils.js',
-        'shared/oauth-step-helpers-runtime.js',
-        'shared/step9-status.js',
-        'content/vps-panel.js',
-      ], {
-        preserveExistingTab: true,
-      });
-      const result = await sendToReadySource('vps-panel', tabId, {
-        type: 'EXECUTE_STEP',
-        step: 9,
-        payload: {
-          localhostUrl: state.localhostUrl,
-          vpsPassword: state.vpsPassword,
+      const client = buildManagementClient(state);
+      const result = await pollManagementAuthStatus({
+        state: state.managementOauthState,
+        timeoutMs: 30000,
+        intervalMs: 1000,
+        getAuthStatus: ({ state: oauthState }) => client.getAuthStatus({ state: oauthState }),
+        onWait: async ({ attempt }) => {
+          if (attempt === 1 || attempt % 5 === 0) {
+            await addLog(`步骤 9：管理 API 仍在等待 OAuth 完成，state=${state.managementOauthState}，第 ${attempt} 次轮询`, 'info');
+          }
         },
-      }, 15000);
-      return result;
+      });
+      return {
+        oauthState: state.managementOauthState,
+        verifiedStatus: result.status || 'ok',
+      };
     }, {
-      startMessage: '步骤 9：正在把 localhost 回调地址回填到 CPA 面板...',
-      successMessage: '步骤 9：CPA 面板校验完成',
+      startMessage: '步骤 9：正在通过管理 API 轮询 OAuth 状态...',
+      successMessage: '步骤 9：管理 API 校验完成',
     });
   },
   async SYNC_CURRENT_ACCOUNT() {

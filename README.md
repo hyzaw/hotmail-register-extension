@@ -33,7 +33,7 @@
    - 在 Side Panel 中填写：
      - `API Key`
      - `API URL`
-     - `CPA URL`
+     - `管理地址`
      - `管理密钥`
      - `默认登录密码`
 4. 开始运行
@@ -57,7 +57,7 @@
   - 直接从 Outlook 邮箱平台 API 拉取未打 `已注册` 标签的邮箱
   - 自动跳过已在本地账本中标记为 `completed` 的邮箱
 - 自动流程支持完整 9 步：
-  1. 从 CPA 面板抓取 OAuth 链接
+  1. 通过管理 API 获取 OAuth 链接
   2. 切到注册页
   3. 填写邮箱和密码
   4. 轮询注册验证码并回填
@@ -65,7 +65,7 @@
   6. 重新打开 OAuth 页面并执行登录
   7. 轮询登录验证码并回填
   8. 确认 OAuth 授权并捕获 localhost 回调
-  9. 回填 CPA 校验
+  9. 通过管理 API 轮询 OAuth 状态
 - Step 3 / Step 6 对注册流、登录流、验证码页、资料页都有更严格的页面识别
 - 验证码轮询日志更细，包含：
   - 当前是第几轮、第几次检查
@@ -75,7 +75,7 @@
 - Step 8 的 Continue 点击采用双保险：
   - 先尝试页面内原生点击
   - 若未跳转，再自动补发调试器点击
-- Step 9 不再刷新已有 CPA 标签页，而是优先复用旧页
+- Step 1 / Step 9 不再依赖 CPA 页面 DOM，而是直接调用管理 API
 - 整轮流程完成后会：
   - 关闭 OpenAI 认证页标签
   - 将当前邮箱写入本地已用账本
@@ -87,10 +87,10 @@
   Outlook 邮箱平台 API Key，用于拉取账号和轮询邮件
 - `API URL`
   邮箱平台或内部后台地址，例如 `http://localhost:5000`
-- `CPA URL`
-  CPA 管理面板地址，例如 `http://ip:port/management.html#/oauth`
+- `管理地址`
+  管理服务地址，例如 `http://ip:port` 或 `http://ip:port/management.html#/oauth`
 - `管理密钥`
-  CPA 管理页登录密钥
+  Management API Bearer Key
 - `默认登录密码`
   OpenAI 登录 / 注册优先使用的密码
 - `轮数`
@@ -102,7 +102,7 @@
 
 ## 自动流程
 
-1. 填写 `API Key / API URL / CPA URL / 管理密钥 / 默认登录密码`
+1. 填写 `API Key / API URL / 管理地址 / 管理密钥 / 默认登录密码`
 2. 点击 `保存设置`
 3. 点击 `自动运行`
 
@@ -111,7 +111,7 @@
 - 从 Outlook API 选一个未注册邮箱
 - 抓取最新 OAuth 链接
 - 打开认证页
-- 跑完整个注册 / 登录 / 授权 / CPA 回填流程
+- 跑完整个注册 / 登录 / 授权 / 管理 API 校验流程
 
 流程中按钮行为：
 
@@ -138,7 +138,7 @@
 6. 刷新 OAuth 并登录
 7. 登录验证码：取码 / 回填
 8. 确认 OAuth 授权
-9. CPA 回填校验
+9. 管理 API 校验
 
 如果你是手动跑完第 9 步，还需要再点一次：
 
@@ -164,7 +164,7 @@
 hotmail-register-extension/
 ├── background.js                # 后台主编排、自动流程、步骤调度、标签同步
 ├── manifest.json               # Chrome MV3 清单
-├── content/                    # 注入 OpenAI / CPA 页面的内容脚本
+├── content/                    # 注入 OpenAI 页面的内容脚本
 │   ├── signup-page.js
 │   ├── vps-panel.js
 │   └── utils.js

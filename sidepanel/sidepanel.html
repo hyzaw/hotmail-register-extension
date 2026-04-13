@@ -53,14 +53,14 @@
           </label>
 
           <label class="data-row">
-            <span class="data-label">CPA URL</span>
-            <input id="vps-url" class="data-input mono" type="text" placeholder="http://ip:port/management.html#/oauth">
+            <span class="data-label">管理地址</span>
+            <input id="vps-url" class="data-input mono" type="text" placeholder="http://ip:port 或 http://ip:port/management.html#/oauth">
           </label>
 
           <label class="data-row">
             <span class="data-label">管理密钥</span>
             <span class="secret-field">
-              <input id="vps-password" class="data-input mono has-eye" type="password" placeholder="CPA 管理密钥">
+              <input id="vps-password" class="data-input mono has-eye" type="password" placeholder="Management API Bearer Key">
               <button id="toggle-vps-password" class="eye-btn" type="button" title="显示管理密钥" aria-label="显示管理密钥">◉</button>
             </span>
           </label>
@@ -125,7 +125,7 @@
             <div class="step-indicator"><span class="step-num">1</span></div>
             <div class="step-main">
               <div class="step-title">获取 OAuth 链接</div>
-              <div class="step-desc">从 CPA 面板抓取 OAuth 链接并写回扩展。</div>
+              <div class="step-desc">通过管理 API 获取 Codex OAuth 链接并写回扩展。</div>
             </div>
             <div class="step-actions">
               <button id="step-1" class="step-btn" type="button">执行</button>
@@ -222,8 +222,8 @@
           <div class="step-row" data-step="9">
             <div class="step-indicator"><span class="step-num">9</span></div>
             <div class="step-main">
-              <div class="step-title">CPA 回填校验</div>
-              <div class="step-desc">把 localhost 回调地址回填到 CPA 面板。</div>
+              <div class="step-title">管理 API 校验</div>
+              <div class="step-desc">通过管理 API 轮询当前 OAuth state 的完成状态。</div>
             </div>
             <div class="step-actions">
               <button id="step-9" class="step-btn" type="button">执行</button>
