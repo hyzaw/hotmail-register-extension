@@ -230,6 +230,19 @@ async function ensureAutoFlowActive() {
   }
 }
 
+async function sleepWithAutoFlowControl(ms, intervalMs = 500) {
+  const totalMs = Math.max(0, Number(ms) || 0);
+  if (!totalMs) return;
+  const tickMs = Math.max(50, Number(intervalMs) || 500);
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < totalMs) {
+    await ensureAutoFlowActive();
+    const remaining = totalMs - (Date.now() - startedAt);
+    await new Promise((resolve) => setTimeout(resolve, Math.min(tickMs, remaining)));
+  }
+}
+
 async function runManagedStep(step, action, messages = {}) {
   const label = getStepLabel(step);
   const startMessage = messages.startMessage ?? `${label} 开始执行`;
@@ -911,7 +924,7 @@ async function runAutoFlow({ resume = false } = {}) {
       runFlow: async (attempt) => {
         await setRuntime({ autoCurrentRun: attempt + 1, autoTotalRuns: totalRuns });
         await addLog(`=== 第 ${attempt + 1}/${totalRuns} 轮：开始执行自动流程 ===`, 'info');
-        return runSingleAutoFlowWithAutoRetry({
+        const flowResult = await runSingleAutoFlowWithAutoRetry({
           state: await getState(),
           getState,
           maxFlowAttempts: 3,
@@ -930,6 +943,12 @@ async function runAutoFlow({ resume = false } = {}) {
             completeCurrentAccount: handlers.COMPLETE_CURRENT_ACCOUNT,
           },
         });
+        if (attempt + 1 < totalRuns) {
+          await ensureAutoFlowActive();
+          await addLog('账号间延迟：等待 10 秒后开始下一个账号...', 'info');
+          await sleepWithAutoFlowControl(10000);
+        }
+        return flowResult;
       },
       onAttemptError: async (error, attempt, context = {}) => {
         const latestState = await getState();
