@@ -39,6 +39,7 @@ const ONE_TIME_CODE_LOGIN_PATTERN = /使用一次性验证码登录|改用(?:一
 const VERIFICATION_PAGE_PATTERN = /检查您的收件箱|输入我们刚刚向|重新发送电子邮件|重新发送验证码|验证码|代码不正确|email\s+verification/i;
 const VERIFICATION_CODE_ERROR_PATTERN = /代码不正确|验证码不正确|incorrect\s+code|invalid\s+code|code\s+is\s+incorrect|code\s+is\s+invalid/i;
 const ADD_PHONE_PAGE_PATTERN = /add[\s-]*phone|添加手机号|添加电话号码|手机号码|手机号|电话号码|phone\s+number|telephone/i;
+const AUTH_RETRY_ERROR_PAGE_PATTERN = /糟糕[，,]?\s*出错了|operation\s+timed\s+out|timed\s+out|oops[，,]?\s*(?:an\s+)?error|something\s+went\s+wrong/i;
 const OAUTH_CONSENT_PAGE_PATTERN = /使用\s*ChatGPT\s*登录到|login\s+to|log\s+in\s+to|authorize|授权/i;
 const SIGNUP_PASSWORD_RULE_PATTERN = /at\s+least\s+12\s+characters|your\s+password\s+must\s+contain|password\s+must\s+contain|至少\s*12\s*个字符|密码必须包含/i;
 const STEP5_SUBMIT_ERROR_PATTERN = /无法根据该信息创建帐户|请重试|unable\s+to\s+create\s+(?:your\s+)?account|couldn'?t\s+create\s+(?:your\s+)?account|something\s+went\s+wrong|invalid\s+(?:birthday|birth|date)|生日|出生日期|年龄|age/i;
@@ -84,6 +85,36 @@ function findResendVerificationCodeTrigger({ allowDisabled = false } = {}) {
     return null;
   }
   return trigger;
+}
+
+function findAuthErrorRetryTrigger({ allowDisabled = false } = {}) {
+  const candidates = document.querySelectorAll(
+    'button, a, [role="button"], [role="link"], input[type="button"], input[type="submit"]'
+  );
+
+  const trigger = Array.from(candidates).find((element) => {
+    if (!isVisibleElement(element)) return false;
+    if (!allowDisabled && !isActionEnabled(element)) return false;
+    return /重试|retry/i.test(getActionText(element));
+  }) || null;
+
+  if (!trigger) return null;
+  const snapshot = getPageTextSnapshot();
+  if (!snapshot || !AUTH_RETRY_ERROR_PAGE_PATTERN.test(snapshot)) {
+    return null;
+  }
+  return trigger;
+}
+
+function maybeThrowAuthRetryErrorPage(step = '') {
+  const trigger = findAuthErrorRetryTrigger({ allowDisabled: true });
+  if (!trigger) return;
+  if (isActionEnabled(trigger)) {
+    utils.clickElement(trigger);
+  }
+  const prefix = '[AUTH_ERROR_SCREEN:retry_page]';
+  const stepLabel = step ? `步骤 ${step}：` : '';
+  throw new Error(`${stepLabel}${prefix} 检测到错误页（Operation timed out / 重试）。URL: ${location.href}`);
 }
 
 function isVerificationPageStillVisible() {
@@ -1300,6 +1331,8 @@ async function step5FillProfile() {
 async function step8FindAndClick() {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 10000) {
+    maybeThrowAuthRetryErrorPage(8);
+
     if (isAddPhonePageReady()) {
       utils.log('步骤 8：检测到需要添加手机号，当前账号将放弃并标记为已注册。', 'warn');
       return { ok: true, addPhoneRequired: true, url: location.href };
@@ -1335,6 +1368,7 @@ async function step8FindAndClick() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const tasks = {
     EXECUTE_STEP: async () => {
+      maybeThrowAuthRetryErrorPage(message.step);
       if (message.step === 2) return step2OpenSignup();
       if (message.step === 3) return step3FillCredentials(message.payload || {});
       if (message.step === 5) return step5FillProfile();
@@ -1342,7 +1376,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.step === 8) return step8FindAndClick();
       return { ok: true, skipped: true };
     },
-    FILL_CODE: async () => fillCode({ ...(message.payload || {}), step: message.step }),
+    FILL_CODE: async () => {
+      maybeThrowAuthRetryErrorPage(message.step);
+      return fillCode({ ...(message.payload || {}), step: message.step });
+    },
     PREPARE_LOGIN_CODE: async () => prepareLoginCodeFlow(),
     RESEND_VERIFICATION_CODE: async () => resendVerificationCode(message.step),
     STEP8_FIND_AND_CLICK: async () => step8FindAndClick(),

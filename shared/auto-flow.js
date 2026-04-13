@@ -672,6 +672,30 @@ export async function runSingleAutoFlowWithAutoRetry({
   const normalizedMaxFlowAttempts = Math.max(1, Number(maxFlowAttempts) || 1);
   const normalizedMaxOauthAttempts = Math.max(1, Number(maxOauthAttempts) || 1);
   let flowAttempt = 1;
+  let authRetryErrorStreak = 0;
+
+  const isAuthRetryErrorScreen = (error) => {
+    const message = error?.message || String(error || '');
+    return message.includes('[AUTH_ERROR_SCREEN:retry_page]');
+  };
+
+  const maybeAbandonAfterAuthRetryError = async (error) => {
+    if (!isAuthRetryErrorScreen(error)) {
+      authRetryErrorStreak = 0;
+      return false;
+    }
+
+    authRetryErrorStreak += 1;
+    if (authRetryErrorStreak < 3) {
+      return false;
+    }
+
+    await checkAutoControl();
+    await addLog(`检测到当前账号连续 ${authRetryErrorStreak} 次出现“糟糕，出错了 / Operation timed out”错误页，放弃该账号并标记为已使用。`, 'warn');
+    const result = await actions.completeCurrentAccount?.();
+    await addLog('单轮自动流程完成，当前邮箱已标记为已使用');
+    return { abandoned: true, result };
+  };
 
   while (flowAttempt <= normalizedMaxFlowAttempts) {
     try {
@@ -679,6 +703,11 @@ export async function runSingleAutoFlowWithAutoRetry({
     } catch (error) {
       if (isAutoRunPausedError(error)) {
         throw error;
+      }
+
+      const abandoned = await maybeAbandonAfterAuthRetryError(error);
+      if (abandoned) {
+        return abandoned.result || { status: 'completed', abandoned: true };
       }
 
       let latestState = await getState();
@@ -701,6 +730,10 @@ export async function runSingleAutoFlowWithAutoRetry({
           } catch (oauthError) {
             if (isAutoRunPausedError(oauthError)) {
               throw oauthError;
+            }
+            const oauthAbandoned = await maybeAbandonAfterAuthRetryError(oauthError);
+            if (oauthAbandoned) {
+              return oauthAbandoned.result || { status: 'completed', abandoned: true };
             }
             latestError = oauthError;
             latestState = await getState();

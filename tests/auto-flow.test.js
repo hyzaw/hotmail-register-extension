@@ -983,6 +983,69 @@ test('runSingleAutoFlowWithAutoRetry retries OAuth without restarting the whole 
   ]);
 });
 
+test('runSingleAutoFlowWithAutoRetry abandons account after 3 consecutive auth retry error screens', async () => {
+  const calls = [];
+  const state = { stepStatuses: {} };
+  let flowRun = 0;
+  let step8Attempts = 0;
+
+  const result = await runSingleAutoFlowWithAutoRetry({
+    state,
+    getState: async () => state,
+    maxFlowAttempts: 3,
+    maxOauthAttempts: 5,
+    actions: {
+      async prepareNextAccount() {
+        flowRun += 1;
+        calls.push(`prepareNextAccount:${flowRun}`);
+      },
+      async refreshOauthFromVps() { calls.push(`refreshOauthFromVps:${flowRun}`); },
+      async findCurrentEmailRecord() { calls.push(`findCurrentEmailRecord:${flowRun}`); },
+      async openOauthUrl() { calls.push(`openOauthUrl:${flowRun}`); },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${flowRun}:${step}`);
+        if (step === 3) {
+          return { skipSignupVerification: true };
+        }
+        if (step === 8) {
+          step8Attempts += 1;
+          state.stepStatuses = {
+            1: 'completed',
+            2: 'completed',
+            3: 'completed',
+            4: 'completed',
+            5: 'completed',
+            6: 'completed',
+            7: 'completed',
+            8: 'failed',
+          };
+          throw new Error('[AUTH_ERROR_SCREEN:retry_page] Operation timed out');
+        }
+      },
+      async pollVerificationCode(phase) {
+        calls.push(`pollVerificationCode:${flowRun}:${phase}`);
+        return { code: '654321' };
+      },
+      async fillLastCode(phase) { calls.push(`fillLastCode:${flowRun}:${phase}`); },
+      async executeFinalVerifyStep() { calls.push(`executeFinalVerifyStep:${flowRun}`); },
+      async completeCurrentAccount() {
+        calls.push(`completeCurrentAccount:${flowRun}`);
+        return { status: 'completed' };
+      },
+      async addLog(message) { calls.push(`log:${message}`); },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(step8Attempts, 3);
+  assert.equal(calls.some((value) => value.includes('检测到当前账号连续 3 次出现')), true);
+  assert.equal(calls.includes('executeFinalVerifyStep:1'), false);
+  assert.deepEqual(
+    calls.filter((value) => value.includes('executeSignupStep:1:8')),
+    ['executeSignupStep:1:8', 'executeSignupStep:1:8', 'executeSignupStep:1:8']
+  );
+});
+
 test('runSingleAutoFlowWithAutoRetry throws after automatic retries are exhausted', async () => {
   const calls = [];
   const state = { stepStatuses: {} };
