@@ -474,6 +474,89 @@ test('runSingleAutoFlow returns to step 5 when step 6 lands on the profile page'
   ]);
 });
 
+test('runSingleAutoFlow returns to step 5 when step 7 lands on the profile page', async () => {
+  const calls = [];
+  let profilePass = 0;
+
+  const result = await runSingleAutoFlow({
+    autoImport: false,
+    actions: {
+      async prepareNextAccount() {
+        calls.push('prepareNextAccount');
+        return { address: 'user@hotmail.com' };
+      },
+      async refreshOauthFromVps() {
+        calls.push('refreshOauthFromVps');
+      },
+      async findCurrentEmailRecord() {
+        calls.push('findCurrentEmailRecord');
+        return { id: 1, address: 'user@hotmail.com' };
+      },
+      async openOauthUrl() {
+        calls.push('openOauthUrl');
+      },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+        if (step === 6) {
+          return { needsOTP: true };
+        }
+        if (step === 5) {
+          profilePass += 1;
+          if (profilePass === 2) {
+            return { reachedConsent: true };
+          }
+        }
+      },
+      async executeFinalVerifyStep() {
+        calls.push('executeFinalVerifyStep');
+      },
+      async pollVerificationCode(phase) {
+        calls.push(`pollVerificationCode:${phase}`);
+        return { code: phase === 'signup' ? '123456' : '654321' };
+      },
+      async fillLastCode(phase) {
+        calls.push(`fillLastCode:${phase}`);
+        if (phase === 'login') {
+          return { needsProfileCompletion: true };
+        }
+      },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) {
+        calls.push(`log:${message}`);
+      },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(calls, [
+    'prepareNextAccount',
+    'log:单轮自动流程开始',
+    'log:阶段 1：刷新 CPA 并重新获取 OAuth 链接',
+    'refreshOauthFromVps',
+    'findCurrentEmailRecord',
+    'log:阶段 2：打开认证页面并进入注册流程',
+    'openOauthUrl',
+    'executeSignupStep:2',
+    'executeSignupStep:3',
+    'pollVerificationCode:signup',
+    'fillLastCode:signup',
+    'executeSignupStep:5',
+    'executeSignupStep:6',
+    'pollVerificationCode:login',
+    'fillLastCode:login',
+    'log:步骤 7：检测到资料页，返回步骤 5 补全资料',
+    'executeSignupStep:5',
+    'log:检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。',
+    'executeSignupStep:8',
+    'executeFinalVerifyStep',
+    'completeCurrentAccount',
+    'log:单轮自动流程完成，当前邮箱已标记为已使用',
+  ]);
+});
+
 test('runSingleAutoFlow does not mark account completed when a step fails', async () => {
   const calls = [];
 

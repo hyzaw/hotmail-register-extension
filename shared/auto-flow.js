@@ -40,6 +40,10 @@ function hasAddPhoneRequirement(result) {
   return Boolean(result?.addPhoneRequired);
 }
 
+function hasProfileCompletionRequirement(result) {
+  return Boolean(result?.needsProfileCompletion);
+}
+
 async function finalizeFromConsent({ addLog, checkAutoControl, executeSignupStep, executeFinalVerifyStep, completeCurrentAccount, completionMessage = '单轮自动流程完成，当前邮箱已标记为已使用' } = {}) {
   await addLog('检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。');
   await checkAutoControl();
@@ -86,6 +90,10 @@ async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSi
     const loginCodeResult = await fillLastCode('login');
     if (hasAddPhoneRequirement(loginCodeResult)) {
       return { addPhoneRequired: true };
+    }
+    if (hasProfileCompletionRequirement(loginCodeResult)) {
+      await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+      return { needsProfileCompletion: true };
     }
     if (hasReachedConsent(loginCodeResult)) {
       return { reachedConsent: true, needsProfileCompletion: false };
@@ -209,6 +217,19 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
             step: 7,
           });
         }
+        if (hasProfileCompletionRequirement(recoveredLoginCodeResult)) {
+          await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+          const profileFromLoginCodeResult = await executeSignupStep(5);
+          if (hasReachedConsent(profileFromLoginCodeResult)) {
+            return finalizeFromConsent({
+              addLog,
+              checkAutoControl,
+              executeSignupStep,
+              executeFinalVerifyStep,
+              completeCurrentAccount,
+            });
+          }
+        }
         if (hasReachedConsent(recoveredLoginCodeResult)) {
           return finalizeFromConsent({
             addLog,
@@ -287,6 +308,19 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
             step: 7,
           });
         }
+        if (hasProfileCompletionRequirement(recoveredLoginCodeResult)) {
+          await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+          const profileFromLoginCodeResult = await executeSignupStep(5);
+          if (hasReachedConsent(profileFromLoginCodeResult)) {
+            return finalizeFromConsent({
+              addLog,
+              checkAutoControl,
+              executeSignupStep,
+              executeFinalVerifyStep,
+              completeCurrentAccount,
+            });
+          }
+        }
         if (hasReachedConsent(recoveredLoginCodeResult)) {
           return finalizeFromConsent({
             addLog,
@@ -309,6 +343,19 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
           completeCurrentAccount,
           step: 7,
         });
+      }
+      if (hasProfileCompletionRequirement(loginCodeResult)) {
+        await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+        const profileFromLoginCodeResult = await executeSignupStep(5);
+        if (hasReachedConsent(profileFromLoginCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+          });
+        }
       }
       if (hasReachedConsent(loginCodeResult)) {
         return finalizeFromConsent({
@@ -569,6 +616,20 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
             completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
           });
         }
+        if (hasProfileCompletionRequirement(recoveredLoginCodeResult)) {
+          await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+          const profileFromLoginCodeResult = await executeSignupStep(5);
+          if (hasReachedConsent(profileFromLoginCodeResult)) {
+            return finalizeFromConsent({
+              addLog,
+              checkAutoControl,
+              executeSignupStep,
+              executeFinalVerifyStep,
+              completeCurrentAccount,
+              completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+            });
+          }
+        }
         if (hasReachedConsent(recoveredLoginCodeResult)) {
           return finalizeFromConsent({
             addLog,
@@ -593,6 +654,20 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
           step: 7,
           completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
         });
+      }
+      if (hasProfileCompletionRequirement(loginCodeResult)) {
+        await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+        const profileFromLoginCodeResult = await executeSignupStep(5);
+        if (hasReachedConsent(profileFromLoginCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
       }
       if (hasReachedConsent(loginCodeResult)) {
         return finalizeFromConsent({
@@ -620,6 +695,20 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
         step: 7,
         completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
       });
+    }
+    if (hasProfileCompletionRequirement(loginCodeResult)) {
+      await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+      const recoveredProfileResult = await executeSignupStep(5);
+      if (hasReachedConsent(recoveredProfileResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
     }
     if (hasReachedConsent(loginCodeResult)) {
       return finalizeFromConsent({
