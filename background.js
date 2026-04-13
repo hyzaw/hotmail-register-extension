@@ -517,7 +517,11 @@ async function sendMessageWithRetry(tabId, message, {
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      return await chrome.tabs.sendMessage(tabId, message);
+      const response = await chrome.tabs.sendMessage(tabId, message);
+      if (response?.ok === false) {
+        throw new Error(response?.error || '页面脚本返回失败结果');
+      }
+      return response;
     } catch (error) {
       if (!isMissingReceiverError(error)) {
         throw error;
@@ -541,7 +545,11 @@ async function sendToTab(tabId, message, options) {
 
 async function sendToActiveAuthTabOnce(message) {
   const tab = await getActiveAuthTab();
-  return chrome.tabs.sendMessage(tab.id, message);
+  const response = await chrome.tabs.sendMessage(tab.id, message);
+  if (response?.ok === false) {
+    throw new Error(response?.error || '页面脚本返回失败结果');
+  }
+  return response;
 }
 
 async function clickWithDebugger(tabId, rect) {
@@ -1683,7 +1691,15 @@ const handlers = {
     const step = phase === 'signup' ? 4 : 7;
     return runManagedStep(step, async () => {
       const result = await pollCodeForPhase(state, phase);
-      await addLog(`${phase === 'signup' ? '注册' : '登录'}验证码：${result.code}`, 'ok');
+      if (result?.code) {
+        await addLog(`${phase === 'signup' ? '注册' : '登录'}验证码：${result.code}`, 'ok');
+      } else if (result?.reachedConsent) {
+        await addLog(`步骤 ${step}：页面已进入 OAuth 授权阶段，跳过${phase === 'signup' ? '注册' : '登录'}验证码轮询。`, 'warn');
+      } else if (result?.addPhoneRequired) {
+        await addLog(`步骤 ${step}：页面要求添加手机号，跳过${phase === 'signup' ? '注册' : '登录'}验证码轮询。`, 'warn');
+      } else if (result?.skippedForProfile) {
+        await addLog(`步骤 ${step}：页面已进入资料页，跳过${phase === 'signup' ? '注册' : '登录'}验证码轮询。`, 'warn');
+      }
       return result;
     }, {
       startMessage: `步骤 ${step}：正在轮询${phase === 'signup' ? '注册' : '登录'}验证码...`,

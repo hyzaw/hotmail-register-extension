@@ -1516,16 +1516,83 @@ async function step5FillProfile() {
     const expectedMonth = String(Number(month));
     const expectedDay = String(Number(day));
 
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
-      fillContentEditableSegment(yearSegment, '');
-      fillContentEditableSegment(monthSegment, '');
-      fillContentEditableSegment(daySegment, '');
-      await utils.sleep(60);
+    const readNumeric = (segment) => {
+      const ariaNow = Number(segment?.getAttribute?.('aria-valuenow') || NaN);
+      if (Number.isFinite(ariaNow)) return ariaNow;
+      const digits = readSpinbuttonDigits(segment);
+      const n = Number(digits || NaN);
+      return Number.isFinite(n) ? n : NaN;
+    };
 
-      fillContentEditableSegment(yearSegment, expectedYear);
-      fillContentEditableSegment(monthSegment, expectedMonth);
-      fillContentEditableSegment(daySegment, expectedDay);
-      await utils.sleep(120);
+    const fireSpinKey = (segment, key) => {
+      if (!segment) return;
+      try {
+        segment.focus?.();
+      } catch {}
+      try {
+        segment.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key }));
+      } catch {}
+      try {
+        segment.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key }));
+      } catch {}
+    };
+
+    const spinToValue = async (segment, target, {
+      min = null,
+      max = null,
+      wrap = false,
+      maxSteps = 80,
+    } = {}) => {
+      if (!segment) return false;
+
+      const desired = Number(target);
+      if (!Number.isFinite(desired)) return false;
+
+      // First try direct insert. Some variants allow typing.
+      fillContentEditableSegment(segment, String(desired));
+      await utils.sleep(60);
+      let current = readNumeric(segment);
+      if (Number.isFinite(current) && current === desired) return true;
+
+      // Fallback: use arrow keys (spinbutton semantics).
+      const rangeMin = Number.isFinite(Number(min)) ? Number(min) : null;
+      const rangeMax = Number.isFinite(Number(max)) ? Number(max) : null;
+      const rangeSize = (rangeMin != null && rangeMax != null) ? (rangeMax - rangeMin + 1) : null;
+
+      for (let step = 0; step < maxSteps; step += 1) {
+        current = readNumeric(segment);
+        if (Number.isFinite(current) && current === desired) return true;
+        if (!Number.isFinite(current)) break;
+
+        let moveUp = desired > current;
+        if (wrap && rangeSize && rangeSize > 1) {
+          const upSteps = (desired - current + rangeSize) % rangeSize;
+          const downSteps = (current - desired + rangeSize) % rangeSize;
+          moveUp = upSteps <= downSteps;
+        }
+
+        fireSpinKey(segment, moveUp ? 'ArrowUp' : 'ArrowDown');
+        await utils.sleep(25);
+
+        // If clamped (no wrap) and we hit boundary, stop.
+        const next = readNumeric(segment);
+        if (!wrap && Number.isFinite(next) && next === current) {
+          if ((rangeMin != null && current <= rangeMin) || (rangeMax != null && current >= rangeMax)) {
+            break;
+          }
+        }
+      }
+
+      current = readNumeric(segment);
+      return Number.isFinite(current) && current === desired;
+    };
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      // Some variants have non-empty defaults (e.g. year=2026). Prefer spinning to the target values.
+      await spinToValue(yearSegment, Number(expectedYear), { min: 1, max: 9999, wrap: false, maxSteps: 120 });
+      await spinToValue(monthSegment, Number(expectedMonth), { min: 1, max: 12, wrap: true, maxSteps: 30 });
+      await spinToValue(daySegment, Number(expectedDay), { min: 1, max: 31, wrap: true, maxSteps: 40 });
+      await utils.sleep(90);
 
       if (hiddenInput) {
         try {
