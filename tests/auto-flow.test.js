@@ -262,6 +262,60 @@ test('runSingleAutoFlow marks account completed immediately when signup password
   ]);
 });
 
+test('runSingleAutoFlow jumps straight to OAuth when step 2 already lands on the consent page', async () => {
+  const calls = [];
+
+  const result = await runSingleAutoFlow({
+    actions: {
+      async prepareNextAccount() {
+        calls.push('prepareNextAccount');
+      },
+      async refreshOauthFromVps() {
+        calls.push('refreshOauthFromVps');
+      },
+      async findCurrentEmailRecord() {
+        calls.push('findCurrentEmailRecord');
+      },
+      async openOauthUrl() {
+        calls.push('openOauthUrl');
+      },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+        if (step === 2) {
+          return { reachedConsent: true };
+        }
+      },
+      async executeFinalVerifyStep() {
+        calls.push('executeFinalVerifyStep');
+      },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) {
+        calls.push(`log:${message}`);
+      },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(calls, [
+    'prepareNextAccount',
+    'log:单轮自动流程开始',
+    'log:阶段 1：刷新 CPA 并重新获取 OAuth 链接',
+    'refreshOauthFromVps',
+    'findCurrentEmailRecord',
+    'log:阶段 2：打开认证页面并进入注册流程',
+    'openOauthUrl',
+    'executeSignupStep:2',
+    'log:检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。',
+    'executeSignupStep:8',
+    'executeFinalVerifyStep',
+    'completeCurrentAccount',
+    'log:单轮自动流程完成，当前邮箱已标记为已使用',
+  ]);
+});
+
 test('runSingleAutoFlow skips login verification when step 6 completes without OTP', async () => {
   const calls = [];
 
@@ -632,6 +686,69 @@ test('runSingleAutoFlowWithAutoRetry retries the whole flow before account compl
     'executeSignupStep:2:8',
     'executeFinalVerifyStep:2',
     'completeCurrentAccount:2',
+    'log:单轮自动流程完成，当前邮箱已标记为已使用',
+  ]);
+});
+
+test('runSingleAutoFlow skips remaining signup steps when signup verification already lands on consent', async () => {
+  const calls = [];
+
+  const result = await runSingleAutoFlow({
+    actions: {
+      async prepareNextAccount() {
+        calls.push('prepareNextAccount');
+      },
+      async refreshOauthFromVps() {
+        calls.push('refreshOauthFromVps');
+      },
+      async findCurrentEmailRecord() {
+        calls.push('findCurrentEmailRecord');
+      },
+      async openOauthUrl() {
+        calls.push('openOauthUrl');
+      },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+      },
+      async pollVerificationCode(phase) {
+        calls.push(`pollVerificationCode:${phase}`);
+      },
+      async fillLastCode(phase) {
+        calls.push(`fillLastCode:${phase}`);
+        if (phase === 'signup') {
+          return { reachedConsent: true };
+        }
+      },
+      async executeFinalVerifyStep() {
+        calls.push('executeFinalVerifyStep');
+      },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) {
+        calls.push(`log:${message}`);
+      },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(calls, [
+    'prepareNextAccount',
+    'log:单轮自动流程开始',
+    'log:阶段 1：刷新 CPA 并重新获取 OAuth 链接',
+    'refreshOauthFromVps',
+    'findCurrentEmailRecord',
+    'log:阶段 2：打开认证页面并进入注册流程',
+    'openOauthUrl',
+    'executeSignupStep:2',
+    'executeSignupStep:3',
+    'pollVerificationCode:signup',
+    'fillLastCode:signup',
+    'log:检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。',
+    'executeSignupStep:8',
+    'executeFinalVerifyStep',
+    'completeCurrentAccount',
     'log:单轮自动流程完成，当前邮箱已标记为已使用',
   ]);
 });

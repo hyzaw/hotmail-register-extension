@@ -32,10 +32,29 @@ function isOauthStep(step) {
   return step === 8 || step === 9;
 }
 
+function hasReachedConsent(result) {
+  return Boolean(result?.reachedConsent);
+}
+
+async function finalizeFromConsent({ addLog, checkAutoControl, executeSignupStep, executeFinalVerifyStep, completeCurrentAccount, completionMessage = '单轮自动流程完成，当前邮箱已标记为已使用' } = {}) {
+  await addLog('检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。');
+  await checkAutoControl();
+  await executeSignupStep(8);
+  await checkAutoControl();
+  await executeFinalVerifyStep();
+  await checkAutoControl();
+  const result = await completeCurrentAccount();
+  await addLog(completionMessage);
+  return result;
+}
+
 async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSignupStep, pollVerificationCode, fillLastCode } = {}) {
   await addLog('步骤 3：检测到当前邮箱已注册，切换到登录流程并跳过注册验证码与资料填写');
   await checkAutoControl();
   const loginStep6Result = await executeSignupStep(6);
+  if (hasReachedConsent(loginStep6Result)) {
+    return { reachedConsent: true, needsProfileCompletion: false };
+  }
   if (loginStep6Result?.needsProfileCompletion) {
     await addLog('步骤 6：检测到资料页，返回步骤 5 补全资料');
     return { needsProfileCompletion: true };
@@ -44,7 +63,10 @@ async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSi
     await checkAutoControl();
     await pollVerificationCode('login');
     await checkAutoControl();
-    await fillLastCode('login');
+    const loginCodeResult = await fillLastCode('login');
+    if (hasReachedConsent(loginCodeResult)) {
+      return { reachedConsent: true, needsProfileCompletion: false };
+    }
   } else {
     await addLog('步骤 6：已通过密码登录，跳过登录验证码阶段');
   }
@@ -86,9 +108,27 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
   await addLog('阶段 2：打开认证页面并进入注册流程');
   await openOauthUrl();
   await checkAutoControl();
-  await executeSignupStep(2);
+  const signupStep2Result = await executeSignupStep(2);
+  if (hasReachedConsent(signupStep2Result)) {
+    return finalizeFromConsent({
+      addLog,
+      checkAutoControl,
+      executeSignupStep,
+      executeFinalVerifyStep,
+      completeCurrentAccount,
+    });
+  }
   await checkAutoControl();
   const signupStep3Result = await executeSignupStep(3);
+  if (hasReachedConsent(signupStep3Result)) {
+    return finalizeFromConsent({
+      addLog,
+      checkAutoControl,
+      executeSignupStep,
+      executeFinalVerifyStep,
+      completeCurrentAccount,
+    });
+  }
   const skipSignupVerification = Boolean(signupStep3Result?.skipSignupVerification);
   const switchToLoginFlow = Boolean(signupStep3Result?.switchToLoginFlow);
   const markAccountRegistered = Boolean(signupStep3Result?.markAccountRegistered);
@@ -103,15 +143,42 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
       pollVerificationCode,
       fillLastCode,
     });
+    if (loginResult?.reachedConsent) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+      });
+    }
     if (loginResult?.needsProfileCompletion) {
       const recoveredProfileResult = await executeSignupStep(5);
+      if (hasReachedConsent(recoveredProfileResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+        });
+      }
       if (recoveredProfileResult?.needsOTP === false) {
         await addLog('步骤 6：资料页已补全，直接进入授权阶段');
       } else {
         await checkAutoControl();
         await pollVerificationCode('login');
         await checkAutoControl();
-        await fillLastCode('login');
+        const recoveredLoginCodeResult = await fillLastCode('login');
+        if (hasReachedConsent(recoveredLoginCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+          });
+        }
       }
     }
   } else {
@@ -121,28 +188,82 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
       await checkAutoControl();
       await pollVerificationCode('signup');
       await checkAutoControl();
-      await fillLastCode('signup');
+      const signupCodeResult = await fillLastCode('signup');
+      if (hasReachedConsent(signupCodeResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+        });
+      }
     }
     await checkAutoControl();
-    await executeSignupStep(5);
+    const step5Result = await executeSignupStep(5);
+    if (hasReachedConsent(step5Result)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+      });
+    }
     await checkAutoControl();
     const loginStep6Result = await executeSignupStep(6);
+    if (hasReachedConsent(loginStep6Result)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+      });
+    }
     if (loginStep6Result?.needsProfileCompletion) {
       await addLog('步骤 6：检测到资料页，返回步骤 5 补全资料');
       const recoveredProfileResult = await executeSignupStep(5);
+      if (hasReachedConsent(recoveredProfileResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+        });
+      }
       if (recoveredProfileResult?.needsOTP === false) {
         await addLog('步骤 6：资料页已补全，直接进入授权阶段');
       } else {
         await checkAutoControl();
         await pollVerificationCode('login');
         await checkAutoControl();
-        await fillLastCode('login');
+        const recoveredLoginCodeResult = await fillLastCode('login');
+        if (hasReachedConsent(recoveredLoginCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+          });
+        }
       }
     } else if (loginStep6Result?.needsOTP !== false) {
       await checkAutoControl();
       await pollVerificationCode('login');
       await checkAutoControl();
-      await fillLastCode('login');
+      const loginCodeResult = await fillLastCode('login');
+      if (hasReachedConsent(loginCodeResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+        });
+      }
     } else {
       await addLog('步骤 6：已通过密码登录，跳过登录验证码阶段');
     }
@@ -208,12 +329,32 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
 
   if (startStep === 2) {
     await checkAutoControl();
-    await executeSignupStep(2);
+    const signupStep2Result = await executeSignupStep(2);
+    if (hasReachedConsent(signupStep2Result)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
   }
 
   if (startStep <= 3) {
     await checkAutoControl();
     const signupStep3Result = await executeSignupStep(3);
+    if (hasReachedConsent(signupStep3Result)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
     if (signupStep3Result?.markAccountRegistered) {
       return completeRegisteredAccountAfterStep3({ addLog, completeCurrentAccount });
     }
@@ -225,15 +366,45 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
         pollVerificationCode,
         fillLastCode,
       });
+      if (loginResult?.reachedConsent) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
       if (loginResult?.needsProfileCompletion) {
         const recoveredProfileResult = await executeSignupStep(5);
+        if (hasReachedConsent(recoveredProfileResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
         if (recoveredProfileResult?.needsOTP === false) {
           await addLog('步骤 6：资料页已补全，直接进入授权阶段');
         } else {
           await checkAutoControl();
           await pollVerificationCode('login');
           await checkAutoControl();
-          await fillLastCode('login');
+          const recoveredLoginCodeResult = await fillLastCode('login');
+          if (hasReachedConsent(recoveredLoginCodeResult)) {
+            return finalizeFromConsent({
+              addLog,
+              checkAutoControl,
+              executeSignupStep,
+              executeFinalVerifyStep,
+              completeCurrentAccount,
+              completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+            });
+          }
         }
       }
       await checkAutoControl();
@@ -250,39 +421,109 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
       await checkAutoControl();
       await pollVerificationCode('signup');
       await checkAutoControl();
-      await fillLastCode('signup');
+      const signupCodeResult = await fillLastCode('signup');
+      if (hasReachedConsent(signupCodeResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
     }
   } else if (startStep === 4) {
     await checkAutoControl();
     await pollVerificationCode('signup');
     await checkAutoControl();
-    await fillLastCode('signup');
+    const signupCodeResult = await fillLastCode('signup');
+    if (hasReachedConsent(signupCodeResult)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
   }
 
   if (startStep <= 5) {
     await checkAutoControl();
-    await executeSignupStep(5);
+    const step5Result = await executeSignupStep(5);
+    if (hasReachedConsent(step5Result)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
   }
 
   if (startStep <= 6) {
     await checkAutoControl();
     const loginStep6Result = await executeSignupStep(6);
+    if (hasReachedConsent(loginStep6Result)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
     if (loginStep6Result?.needsProfileCompletion) {
       await addLog('步骤 6：检测到资料页，返回步骤 5 补全资料');
       const recoveredProfileResult = await executeSignupStep(5);
+      if (hasReachedConsent(recoveredProfileResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
       if (recoveredProfileResult?.needsOTP === false) {
         await addLog('步骤 6：资料页已补全，直接进入授权阶段');
       } else {
         await checkAutoControl();
         await pollVerificationCode('login');
         await checkAutoControl();
-        await fillLastCode('login');
+        const recoveredLoginCodeResult = await fillLastCode('login');
+        if (hasReachedConsent(recoveredLoginCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
       }
     } else if (loginStep6Result?.needsOTP !== false) {
       await checkAutoControl();
       await pollVerificationCode('login');
       await checkAutoControl();
-      await fillLastCode('login');
+      const loginCodeResult = await fillLastCode('login');
+      if (hasReachedConsent(loginCodeResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
     } else {
       await addLog('步骤 6：已通过密码登录，跳过登录验证码阶段');
     }
@@ -290,7 +531,17 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
     await checkAutoControl();
     await pollVerificationCode('login');
     await checkAutoControl();
-    await fillLastCode('login');
+    const loginCodeResult = await fillLastCode('login');
+    if (hasReachedConsent(loginCodeResult)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
   }
 
   if (startStep <= 8) {

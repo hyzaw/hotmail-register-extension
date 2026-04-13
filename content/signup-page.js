@@ -608,7 +608,18 @@ function isStep8Ready() {
   });
 }
 
+function buildConsentReachedResult(extra = {}) {
+  return { ok: true, reachedConsent: true, ...extra };
+}
+
 async function step2OpenSignup() {
+  if (isStep8Ready()) {
+    await clearPendingSignupStep();
+    utils.log('步骤 2：页面已提前进入 OAuth 授权页，后续将直接进入步骤 8。', 'warn');
+    utils.reportComplete(2, { reachedConsent: true });
+    return buildConsentReachedResult();
+  }
+
   const emailInput = helpers.getEmailInput();
   const passwordInput = helpers.getPasswordInput();
 
@@ -624,6 +635,13 @@ async function step2OpenSignup() {
   let clickAttempts = 0;
   let redirectAttempted = false;
   while (Date.now() - startedAt < 8000) {
+    if (isStep8Ready()) {
+      await clearPendingSignupStep();
+      utils.log('步骤 2：页面已提前进入 OAuth 授权页，后续将直接进入步骤 8。', 'warn');
+      utils.reportComplete(2, { reachedConsent: true });
+      return buildConsentReachedResult();
+    }
+
     if (isExplicitVisibleSignupFlowPageReady()) {
       await clearPendingSignupStep();
       utils.log('步骤 2：已确认进入真实注册页。', 'ok');
@@ -743,6 +761,12 @@ async function finishStep3OnPasswordPage(payload) {
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < 6000) {
+    if (isStep8Ready()) {
+      await clearPendingSignupStep();
+      utils.log('步骤 3：页面已提前进入 OAuth 授权页，后续将直接进入步骤 8。', 'warn');
+      utils.reportComplete(3, { address: payload.address, reachedConsent: true });
+      return buildConsentReachedResult({ address: payload.address });
+    }
     if (isProfileSetupPageReady()) {
       utils.log('步骤 3：检测到当前邮箱已进入资料页，后续将直接进入步骤 5。', 'warn');
       await clearPendingSignupStep();
@@ -771,6 +795,13 @@ async function finishStep3OnPasswordPage(payload) {
 }
 
 async function step3FillCredentials(payload) {
+  if (isStep8Ready()) {
+    await clearPendingSignupStep();
+    utils.log('步骤 3：页面已提前进入 OAuth 授权页，后续将直接进入步骤 8。', 'warn');
+    utils.reportComplete(3, { address: payload.address, reachedConsent: true });
+    return buildConsentReachedResult({ address: payload.address });
+  }
+
   if (helpers.isEmailVerificationUrl?.(location.href) || isVerificationPageStillVisible()) {
     const pending = await readPendingSignupStep();
     const verificationRequestedAt = String(pending?.verificationRequestedAt || '').trim();
@@ -839,6 +870,11 @@ async function resumePendingSignupStep() {
   }
 
   if (pending.step === 2) {
+    if (isStep8Ready()) {
+      await clearPendingSignupStep();
+      utils.log('步骤 2：页面切换后已提前进入 OAuth 授权页。', 'warn');
+      utils.reportComplete(2, { resumed: true, reachedConsent: true });
+    }
     if (isExplicitVisibleSignupFlowPageReady()) {
       await clearPendingSignupStep();
       utils.log('步骤 2：页面切换后已确认进入真实注册页。', 'ok');
@@ -848,6 +884,15 @@ async function resumePendingSignupStep() {
   }
 
   if (pending.step === 3 && pending.payload) {
+    if (isStep8Ready()) {
+      await clearPendingSignupStep();
+      utils.log('步骤 3：页面切换后已提前进入 OAuth 授权页。', 'warn');
+      utils.reportComplete(3, {
+        address: pending.payload.address,
+        reachedConsent: true,
+      });
+      return;
+    }
     if (isVerificationPageStillVisible() || helpers.isEmailVerificationUrl?.(location.href)) {
       await clearPendingSignupStep();
       utils.reportComplete(3, {
@@ -896,6 +941,11 @@ async function step6Login(payload) {
     return { ok: true, needsProfileCompletion: true };
   }
 
+  if (isStep8Ready()) {
+    utils.log('步骤 6：页面已提前进入 OAuth 授权页。', 'ok');
+    return buildConsentReachedResult({ needsOTP: false });
+  }
+
   const emailInput = await utils.waitForElement(
     'input[type="email"], input[name="email"], input[name="username"], input[placeholder*="email" i]',
     15000
@@ -933,7 +983,7 @@ async function step6Login(payload) {
       return { ok: true, needsProfileCompletion: true };
     }
     if (path === 'consent') {
-      return { ok: true, needsOTP: false };
+      return buildConsentReachedResult({ needsOTP: false });
     }
     if (path === 'otp') {
       utils.log('步骤 6：已进入一次性邮箱验证码登录流程。', 'ok');
@@ -986,7 +1036,7 @@ async function step6Login(payload) {
       }
       if (isStep8Ready()) {
         utils.log('步骤 6：密码登录已通过，页面已进入授权阶段。', 'ok');
-        return { ok: true, needsOTP: false };
+        return buildConsentReachedResult({ needsOTP: false });
       }
       if (isLoginVerificationStageReady()) {
         utils.log('步骤 6：密码已提交，准备进入登录验证码阶段。');
@@ -1124,10 +1174,21 @@ async function fillCode(payload) {
     utils.clickElement(submitButton);
     await pauseForInteraction('afterPrimarySubmit');
   }
-  return waitForCodeSubmitOutcome(payload.step);
+  const outcome = await waitForCodeSubmitOutcome(payload.step);
+  if (payload.step === 4 || payload.step === 7) {
+    if (isStep8Ready()) {
+      return buildConsentReachedResult(outcome);
+    }
+  }
+  return outcome;
 }
 
 async function step5FillProfile() {
+  if (isStep8Ready()) {
+    utils.log('步骤 5：页面已提前进入 OAuth 授权页，跳过资料填写。', 'warn');
+    return buildConsentReachedResult();
+  }
+
   const profile = helpers.buildRandomProfile?.() || {
     firstName: 'Ethan',
     lastName: 'Carter',
@@ -1202,7 +1263,11 @@ async function step5FillProfile() {
   if (outcome.invalidProfile) {
     throw new Error(`步骤 5：${outcome.errorText}`);
   }
-  return { ok: true, addPhonePage: Boolean(outcome.addPhonePage) };
+  return {
+    ok: true,
+    addPhonePage: Boolean(outcome.addPhonePage),
+    reachedConsent: Boolean(isStep8Ready()),
+  };
 }
 
 async function step8FindAndClick() {
