@@ -192,6 +192,8 @@ test('isExistingAccountSignalText only matches explicit account-exists errors', 
   assert.equal(isExistingAccountSignalText('This email address is already in use'), true);
   assert.equal(isExistingAccountSignalText('与此电子邮件地址相关联的帐户已存在'), true);
   assert.equal(isExistingAccountSignalText('与此电子邮件地址相关联的账户已存在'), true);
+  assert.equal(isExistingAccountSignalText('相关联的帐户已存在'), true);
+  assert.equal(isExistingAccountSignalText('相关联的账户已存在'), true);
   assert.equal(isExistingAccountSignalText('已存在关联账号'), true);
   assert.equal(isExistingAccountSignalText('已存在关联账户'), true);
   assert.equal(isExistingAccountSignalText('该邮箱已被注册'), true);
