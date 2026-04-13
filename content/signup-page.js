@@ -198,6 +198,8 @@ function getVisibleProfileSetupFields() {
     'input[placeholder*="全名"]',
     'input[type="date"]',
     'input[name="age"]',
+    'input[placeholder*="年龄"]',
+    'input[aria-label*="年龄"]',
     'input[inputmode="numeric"]',
     'input[type="number"]',
     '[role="spinbutton"][data-type="year"]',
@@ -1365,7 +1367,7 @@ async function step5FillProfile() {
     singleNameInput = document.querySelector('input[name="name"], input[placeholder*="全名"], input[autocomplete="name"]');
     firstNameInput = document.querySelector('input[name="first_name"], input[autocomplete="given-name"]');
     lastNameInput = document.querySelector('input[name="last_name"], input[autocomplete="family-name"]');
-    ageInput = document.querySelector('input[name="age"], input[inputmode="numeric"], input[type="number"]');
+    ageInput = document.querySelector('input[name="age"], input[placeholder*="年龄"], input[aria-label*="年龄"], input[inputmode="numeric"], input[type="number"]');
     birthdayField = getVisibleBirthdayDateField();
 
     const hasNameField = Boolean(
