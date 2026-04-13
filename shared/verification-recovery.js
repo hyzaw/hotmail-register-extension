@@ -11,6 +11,12 @@ export async function pollVerificationCodeWithResend({
     throw new Error('缺少 pollVerificationCode 函数');
   }
 
+  const isBlockingPageError = (error) => {
+    const message = error?.message || String(error || '');
+    return message.includes('[AUTH_ERROR_SCREEN:retry_page]')
+      || message.includes('[PAGE_ERROR:blocking_verification_wait]');
+  };
+
   let minReceivedAt = '';
   let lastError = null;
 
@@ -24,6 +30,9 @@ export async function pollVerificationCodeWithResend({
       return await pollVerificationCode({ minReceivedAt, round });
     } catch (error) {
       lastError = error;
+      if (isBlockingPageError(error)) {
+        throw error;
+      }
       await addLog(`步骤 ${step}：${error.message || String(error)}`, 'warn');
 
       if (round >= maxRounds) {

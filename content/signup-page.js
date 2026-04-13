@@ -40,6 +40,7 @@ const VERIFICATION_PAGE_PATTERN = /检查您的收件箱|输入我们刚刚向|�
 const VERIFICATION_CODE_ERROR_PATTERN = /代码不正确|验证码不正确|incorrect\s+code|invalid\s+code|code\s+is\s+incorrect|code\s+is\s+invalid/i;
 const ADD_PHONE_PAGE_PATTERN = /add[\s-]*phone|添加手机号|添加电话号码|手机号码|手机号|电话号码|phone\s+number|telephone/i;
 const AUTH_RETRY_ERROR_PAGE_PATTERN = /糟糕[，,]?\s*出错了|operation\s+timed\s+out|timed\s+out|oops[，,]?\s*(?:an\s+)?error|something\s+went\s+wrong/i;
+const BLOCKING_VERIFICATION_WAIT_ERROR_PATTERN = /无法发送|发送失败|暂时无法|请稍后|稍后重试|too\s+many\s+requests|rate\s+limit|try\s+again\s+later|can'?t\s+send|couldn'?t\s+send|failed\s+to\s+send|network\s+error/i;
 const OAUTH_CONSENT_PAGE_PATTERN = /使用\s*ChatGPT\s*登录到|login\s+to|log\s+in\s+to|authorize|授权/i;
 const SIGNUP_PASSWORD_RULE_PATTERN = /at\s+least\s+12\s+characters|your\s+password\s+must\s+contain|password\s+must\s+contain|至少\s*12\s*个字符|密码必须包含/i;
 const STEP5_SUBMIT_ERROR_PATTERN = /无法根据该信息创建帐户|请重试|unable\s+to\s+create\s+(?:your\s+)?account|couldn'?t\s+create\s+(?:your\s+)?account|something\s+went\s+wrong|invalid\s+(?:birthday|birth|date)|生日|出生日期|年龄|age/i;
@@ -115,6 +116,46 @@ function maybeThrowAuthRetryErrorPage(step = '') {
   const prefix = '[AUTH_ERROR_SCREEN:retry_page]';
   const stepLabel = step ? `步骤 ${step}：` : '';
   throw new Error(`${stepLabel}${prefix} 检测到错误页（Operation timed out / 重试）。URL: ${location.href}`);
+}
+
+function getBlockingVerificationWaitErrorText() {
+  const messages = [];
+  const selectors = [
+    '.react-aria-FieldError',
+    '[slot="errorMessage"]',
+    '[id$="-error"]',
+    '[id$="-errors"]',
+    '[role="alert"]',
+    '[aria-live="assertive"]',
+    '[aria-live="polite"]',
+    '[class*="error"]',
+  ];
+
+  for (const selector of selectors) {
+    document.querySelectorAll(selector).forEach((element) => {
+      if (!isVisibleElement(element)) return;
+      const text = helpers.normalizeInlineText?.(element.textContent || '') || getActionText(element);
+      if (text) {
+        messages.push(text);
+      }
+    });
+  }
+
+  const snapshot = helpers.normalizeInlineText?.(getPageTextSnapshot()) || '';
+  if (snapshot && BLOCKING_VERIFICATION_WAIT_ERROR_PATTERN.test(snapshot)) {
+    messages.push(snapshot);
+  }
+
+  return messages.find((text) => BLOCKING_VERIFICATION_WAIT_ERROR_PATTERN.test(text)) || '';
+}
+
+function maybeThrowBlockingVerificationWaitError(step = '') {
+  const errorText = getBlockingVerificationWaitErrorText();
+  if (!errorText) return;
+  const prefix = '[PAGE_ERROR:blocking_verification_wait]';
+  const stepLabel = step ? `步骤 ${step}：` : '';
+  // Keep the thrown message compact to avoid log spam.
+  throw new Error(`${stepLabel}${prefix} 检测到页面错误提示，终止等待并触发流程重试。URL: ${location.href}`);
 }
 
 function isVerificationPageStillVisible() {
@@ -1369,6 +1410,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const tasks = {
     EXECUTE_STEP: async () => {
       maybeThrowAuthRetryErrorPage(message.step);
+      maybeThrowBlockingVerificationWaitError(message.step);
       if (message.step === 2) return step2OpenSignup();
       if (message.step === 3) return step3FillCredentials(message.payload || {});
       if (message.step === 5) return step5FillProfile();
@@ -1378,11 +1420,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     },
     FILL_CODE: async () => {
       maybeThrowAuthRetryErrorPage(message.step);
+      maybeThrowBlockingVerificationWaitError(message.step);
       return fillCode({ ...(message.payload || {}), step: message.step });
     },
     PREPARE_LOGIN_CODE: async () => prepareLoginCodeFlow(),
-    RESEND_VERIFICATION_CODE: async () => resendVerificationCode(message.step),
+    RESEND_VERIFICATION_CODE: async () => {
+      maybeThrowAuthRetryErrorPage(message.step);
+      maybeThrowBlockingVerificationWaitError(message.step);
+      return resendVerificationCode(message.step);
+    },
     STEP8_FIND_AND_CLICK: async () => step8FindAndClick(),
+    CHECK_PAGE_HEALTH: async () => {
+      maybeThrowAuthRetryErrorPage(message.step);
+      maybeThrowBlockingVerificationWaitError(message.step);
+      return { ok: true, healthy: true, url: location.href };
+    },
   };
 
   const task = tasks[message.type];

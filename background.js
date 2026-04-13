@@ -711,6 +711,8 @@ async function pollCodeForPhase(state, phase, options = {}) {
         consumedMessageIds,
         shouldContinue: async () => {
           await ensureAutoFlowActive();
+          // Don't just wait for mail: if the page itself shows an error, abort immediately and retry the flow.
+          await sendToActiveAuthTab({ type: 'CHECK_PAGE_HEALTH', step, payload: {} }, { timeoutMs: 1500, intervalMs: 150 });
           return true;
         },
         match: {
