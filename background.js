@@ -18,6 +18,7 @@ import { createContentStepSignalRegistry, settleStepWaiterFromDispatchResult } f
 import { chooseOauthTabCandidate, listAuthTabIds } from './shared/open-oauth-target.js';
 import { createManagementApiClient } from './shared/management-api-client.js';
 import { pollManagementAuthStatus } from './shared/management-auth-status.js';
+import { withManagementApiRetry } from './shared/management-api-retry.js';
 import { findCompletedLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
 import {
   clearPendingSignupStepForTab,
@@ -324,6 +325,13 @@ function buildManagementClient(settings) {
     baseUrl: settings.vpsUrl,
     managementKey: settings.vpsPassword,
   });
+}
+
+function formatRetryDelay(delayMs) {
+  if (delayMs >= 1000 && delayMs % 1000 === 0) {
+    return `${delayMs / 1000} 秒`;
+  }
+  return `${delayMs}ms`;
 }
 
 function getSelectedAccountAddress(state = {}) {
@@ -981,7 +989,15 @@ const handlers = {
     }
     return runManagedStep(1, async () => {
       const client = buildManagementClient(state);
-      const result = await client.getCodexAuthUrl({ isWebUi: true });
+      const result = await withManagementApiRetry({
+        action: () => client.getCodexAuthUrl({ isWebUi: true }),
+        onRetry: async ({ nextAttempt, maxAttempts, delayMs, error }) => {
+          await addLog(
+            `步骤 1：调用 CPA 失败，将在 ${formatRetryDelay(delayMs)}后重试（第 ${nextAttempt}/${maxAttempts} 次尝试）：${error?.message || String(error)}`,
+            'warn',
+          );
+        },
+      });
       await setSettings({ oauthUrl: result.url });
       await setRuntime({
         managementOauthState: result.state,
@@ -1217,7 +1233,15 @@ const handlers = {
         state: state.managementOauthState,
         timeoutMs: 30000,
         intervalMs: 1000,
-        getAuthStatus: ({ state: oauthState }) => client.getAuthStatus({ state: oauthState }),
+        getAuthStatus: ({ state: oauthState }) => withManagementApiRetry({
+          action: () => client.getAuthStatus({ state: oauthState }),
+          onRetry: async ({ nextAttempt, maxAttempts, delayMs, error }) => {
+            await addLog(
+              `步骤 9：调用 CPA 查询 OAuth 状态失败，将在 ${formatRetryDelay(delayMs)}后重试（第 ${nextAttempt}/${maxAttempts} 次尝试）：${error?.message || String(error)}`,
+              'warn',
+            );
+          },
+        }),
         onWait: async ({ attempt }) => {
           if (attempt === 1 || attempt % 5 === 0) {
             await addLog(`步骤 9：管理 API 仍在等待 OAuth 完成，state=${state.managementOauthState}，第 ${attempt} 次轮询`, 'info');
@@ -1330,10 +1354,18 @@ const handlers = {
             let submittedToManagementApi = false;
             if (oauthState) {
               const client = buildManagementClient(latestState);
-              await client.submitOAuthCallback({
-                provider: 'codex',
-                redirectUrl: matchedUrl,
-                state: oauthState,
+              await withManagementApiRetry({
+                action: () => client.submitOAuthCallback({
+                  provider: 'codex',
+                  redirectUrl: matchedUrl,
+                  state: oauthState,
+                }),
+                onRetry: async ({ nextAttempt, maxAttempts, delayMs, error }) => {
+                  await addLog(
+                    `步骤 8：提交 localhost 回调到管理端失败，将在 ${formatRetryDelay(delayMs)}后重试（第 ${nextAttempt}/${maxAttempts} 次尝试）：${error?.message || String(error)}`,
+                    'warn',
+                  );
+                },
               });
               submittedToManagementApi = true;
             } else {
