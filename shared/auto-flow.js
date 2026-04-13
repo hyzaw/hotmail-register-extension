@@ -69,7 +69,7 @@ async function abandonAccountForAddPhone({ addLog, checkAutoControl, completeCur
 }
 
 async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSignupStep, pollVerificationCode, fillLastCode } = {}) {
-  await addLog('步骤 3：检测到当前邮箱已注册，切换到登录流程并跳过注册验证码与资料填写');
+  await addLog('步骤 3：检测到当前邮箱已存在关联账号，切换到登录流程并跳过注册验证码与资料填写');
   await checkAutoControl();
   const loginStep6Result = await executeSignupStep(6);
   if (hasReachedConsent(loginStep6Result)) {
@@ -154,7 +154,7 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
   const markAccountRegistered = Boolean(signupStep3Result?.markAccountRegistered);
   if (switchToLoginFlow || markAccountRegistered) {
     if (markAccountRegistered && !switchToLoginFlow) {
-      await addLog('步骤 3：检测到当前邮箱已注册，改为继续 OAuth 登录流程（不再放弃该账号）');
+      await addLog('步骤 3：检测到当前邮箱已存在关联账号，改为继续 OAuth 登录流程（不再放弃该账号）');
     }
     const loginResult = await continueFromLoginAfterStep3({
       addLog,

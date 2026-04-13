@@ -218,7 +218,7 @@
   }
 
   function isExistingAccountSignalText(text) {
-    return /account\s+associated\s+with\s+this\s+email\s+address\s+already\s+exists|email\s+address.*already\s+exists|this\s+email\s+address\s+is\s+already\s+in\s+use|与此电子邮件地址相关联的帐户已存在|与此电子邮件地址相关联的账户已存在|该电子邮件地址已被使用|该邮箱已被使用|账户已存在|帐户已存在/i.test(normalizeInlineText(text));
+    return /account\s+associated\s+with\s+this\s+email\s+address\s+already\s+exists|email\s+address.*already\s+exists|this\s+email\s+address\s+is\s+already\s+in\s+use|与此电子邮件地址相关联的帐户已存在|与此电子邮件地址相关联的账户已存在|该电子邮件地址已被使用|该邮箱已被使用|账户已存在|帐户已存在|已存在关联(?:账号|帐户|账户)|(?:该|此)?(?:邮箱|账号|账户|帐户)已(?:被)?注册|(?:该|此)?(?:邮箱|账号|账户|帐户)已存在|已被注册|已经注册|已注册/i.test(normalizeInlineText(text));
   }
 
   function shouldTreatLoginFlowAsExistingAccount({ url = '', text = '', hasLoginAction = false } = {}) {
