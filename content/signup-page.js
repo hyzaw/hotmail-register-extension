@@ -1185,8 +1185,16 @@ async function step8FindAndClick() {
       const clickTarget = continueButton;
       setTimeout(() => {
         try {
-          clickTarget.click?.();
-        } catch {}
+          utils.clickElement(clickTarget);
+          const form = clickTarget.form || clickTarget.closest?.('form') || null;
+          if (form && typeof form.requestSubmit === 'function') {
+            form.requestSubmit(clickTarget);
+          }
+        } catch {
+          try {
+            clickTarget.click?.();
+          } catch {}
+        }
       }, 0);
       nativeClicked = true;
       return {
