@@ -81,6 +81,8 @@ async function resetTransientRuntime() {
     authTabId: null,
     managementOauthState: '',
     localhostUrl: '',
+    signupVerificationRequestedAt: '',
+    loginVerificationRequestedAt: '',
     lastSignupCode: '',
     lastLoginCode: '',
     lastSignupMail: null,
@@ -313,6 +315,8 @@ async function resetAuthAttemptRuntime() {
     authTabId: null,
     managementOauthState: '',
     localhostUrl: '',
+    signupVerificationRequestedAt: '',
+    loginVerificationRequestedAt: '',
     lastSignupCode: '',
     lastLoginCode: '',
     lastSignupMail: null,
@@ -332,6 +336,39 @@ function formatRetryDelay(delayMs) {
     return `${delayMs / 1000} 秒`;
   }
   return `${delayMs}ms`;
+}
+
+function getVerificationRequestedAtRuntimeKey(phase) {
+  return phase === 'signup' ? 'signupVerificationRequestedAt' : 'loginVerificationRequestedAt';
+}
+
+function buildVerificationRequestedAtRuntimeUpdate(step, payload = {}) {
+  if (step === 3) {
+    if (payload.markAccountRegistered || payload.switchToLoginFlow || payload.skipSignupVerification) {
+      return { signupVerificationRequestedAt: '' };
+    }
+
+    const verificationRequestedAt = String(payload.verificationRequestedAt || '').trim();
+    return verificationRequestedAt ? { signupVerificationRequestedAt: verificationRequestedAt } : null;
+  }
+
+  if (step === 6) {
+    if (payload.needsOTP === false || payload.needsProfileCompletion) {
+      return { loginVerificationRequestedAt: '' };
+    }
+
+    const verificationRequestedAt = String(payload.verificationRequestedAt || '').trim();
+    return verificationRequestedAt ? { loginVerificationRequestedAt: verificationRequestedAt } : null;
+  }
+
+  return null;
+}
+
+async function syncVerificationRequestedAtForStep(step, payload = {}) {
+  const runtimeUpdate = buildVerificationRequestedAtRuntimeUpdate(step, payload);
+  if (runtimeUpdate) {
+    await setRuntime(runtimeUpdate);
+  }
 }
 
 function getSelectedAccountAddress(state = {}) {
@@ -615,6 +652,7 @@ async function pollCodeForPhase(state, phase, options = {}) {
   const step = phase === 'signup' ? 4 : 7;
   const phaseLabel = phase === 'signup' ? '注册验证码' : '登录验证码';
   const phaseStartedAt = new Date().toISOString();
+  const verificationRequestedAt = String(state[getVerificationRequestedAtRuntimeKey(phase)] || '').trim();
   const minReceivedAtOverride = String(options.minReceivedAtOverride || '').trim();
   const client = buildClient(state);
   const consumedMessageIds = getConsumedMessageIds(
@@ -628,12 +666,18 @@ async function pollCodeForPhase(state, phase, options = {}) {
     resendVerificationCode: async (targetStep) => {
       await ensureAutoFlowActive();
       await addLog(`步骤 ${targetStep}：正在请求新的验证码...`, 'warn');
-      await sendToActiveAuthTab({
+      const resendResult = await sendToActiveAuthTab({
         type: 'RESEND_VERIFICATION_CODE',
         step: targetStep,
         payload: {},
       });
-      return new Date().toISOString();
+      const requestedAt = String(
+        resendResult?.verificationRequestedAt
+        || resendResult?.clickedAt
+        || new Date().toISOString()
+      ).trim();
+      await setRuntime({ [getVerificationRequestedAtRuntimeKey(phase)]: requestedAt });
+      return requestedAt;
     },
     pollVerificationCode: async ({ minReceivedAt, round }) => {
       await ensureAutoFlowActive();
@@ -643,8 +687,8 @@ async function pollCodeForPhase(state, phase, options = {}) {
         email: account.address,
         intervalMs: state.pollIntervalSec * 1000,
         timeoutMs: state.pollTimeoutSec * 1000,
-        minReceivedAt: minReceivedAt || minReceivedAtOverride || phaseStartedAt,
-        freshnessGraceMs: 15000,
+        minReceivedAt: minReceivedAt || minReceivedAtOverride || verificationRequestedAt || phaseStartedAt,
+        freshnessGraceMs: 0,
         mailboxContext: {
           isTemp: Boolean(account?.isTemp || emailRecord?.isTemp),
         },
@@ -724,7 +768,9 @@ async function fillVerificationCodeWithRetry(state, phase, options = {}) {
 
     const nextState = await getState();
     const nextResult = await pollCodeForPhase(nextState, phase, {
-      minReceivedAtOverride: mailMeta?.receivedAt || new Date().toISOString(),
+      minReceivedAtOverride: mailMeta?.receivedAt
+        || currentState[getVerificationRequestedAtRuntimeKey(phase)]
+        || new Date().toISOString(),
     });
     await addLog(`${phaseLabel}：${nextResult.code}`, 'ok');
   }
@@ -1493,7 +1539,7 @@ const handlers = {
         });
         const authTab = await openOauthUrl(state.oauthUrl);
         await addLog('步骤 6：已重新打开 OAuth 页面，准备登录...', 'info');
-        return sendToTab(authTab.id, {
+        const result = await sendToTab(authTab.id, {
           type: 'EXECUTE_STEP',
           step,
           payload: {
@@ -1501,8 +1547,10 @@ const handlers = {
             loginPassword,
           },
         });
+        await syncVerificationRequestedAtForStep(step, result);
+        return result;
       }
-      return executeSignupStepCommand({
+      const result = await executeSignupStepCommand({
         step,
         payload,
         state,
@@ -1512,6 +1560,8 @@ const handlers = {
         sendToActiveAuthTab: step === 3 ? sendToActiveAuthTabOnce : sendToActiveAuthTab,
         sendToTab,
       });
+      await syncVerificationRequestedAtForStep(step, result);
+      return result;
     }, {
       startMessage: {
         2: '',
@@ -1577,12 +1627,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'STEP_COMPLETE') {
+    const verificationRequestedAtRuntimeUpdate = buildVerificationRequestedAtRuntimeUpdate(
+      message.step,
+      message.payload || {},
+    );
     Promise.all([
       setStepStatus(message.step, 'completed'),
       (message.step === 2 || message.step === 3) && _sender?.tab?.id
         ? clearPendingSignupStep(_sender.tab.id)
         : Promise.resolve(),
       message.payload?.localhostUrl ? setRuntime({ localhostUrl: message.payload.localhostUrl }) : Promise.resolve(),
+      verificationRequestedAtRuntimeUpdate ? setRuntime(verificationRequestedAtRuntimeUpdate) : Promise.resolve(),
       addLog(`页面内步骤 ${message.step} 已完成`, 'ok'),
     ])
       .then(() => {

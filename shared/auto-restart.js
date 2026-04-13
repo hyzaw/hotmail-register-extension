@@ -12,6 +12,8 @@ export function buildAutoRestartRuntimeUpdates({
     currentEmailRecord: null,
     managementOauthState: '',
     localhostUrl: '',
+    signupVerificationRequestedAt: '',
+    loginVerificationRequestedAt: '',
     lastSignupCode: '',
     lastSignupMail: null,
     lastLoginCode: '',

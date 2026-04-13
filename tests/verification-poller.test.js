@@ -105,7 +105,40 @@ test('pollVerificationCode respects sender and keyword filters', async () => {
   assert.equal(result.mail.messageId, 'm2');
 });
 
-test('pollVerificationCode falls back to the latest matching older mail when no fresh mail arrives', async () => {
+test('pollVerificationCode does not fall back to older mail when minReceivedAt is set', async () => {
+  await assert.rejects(
+    () => pollVerificationCode({
+      client: {
+        async listUserEmailMails() {
+          return {
+            resolvedEmail: 'user@hotmail.com',
+            emails: [
+              {
+                messageId: 'm1',
+                subject: 'OpenAI verification code',
+                bodyText: 'Use code 333444',
+                from: 'noreply@openai.com',
+                receivedAt: '2026-04-12T17:59:00Z',
+              },
+            ],
+          };
+        },
+      },
+      email: 'user@hotmail.com',
+      intervalMs: 1,
+      timeoutMs: 5,
+      minReceivedAt: '2026-04-12T18:00:00Z',
+      match: {
+        fromIncludes: 'openai.com',
+        keyword: 'OpenAI',
+        subjectContains: 'OpenAI',
+      },
+    }),
+    /轮询超时/
+  );
+});
+
+test('pollVerificationCode can still fall back to older mail when no minReceivedAt is set', async () => {
   const result = await pollVerificationCode({
     client: {
       async listUserEmailMails() {
@@ -126,7 +159,6 @@ test('pollVerificationCode falls back to the latest matching older mail when no 
     email: 'user@hotmail.com',
     intervalMs: 1,
     timeoutMs: 5,
-    minReceivedAt: '2026-04-12T18:00:00Z',
     match: {
       fromIncludes: 'openai.com',
       keyword: 'OpenAI',
@@ -136,7 +168,7 @@ test('pollVerificationCode falls back to the latest matching older mail when no 
 
   assert.equal(result.code, '333444');
   assert.equal(result.mail.messageId, 'm1');
-  assert.equal(result.usedOlderMatch, true);
+  assert.equal(result.usedOlderMatch, false);
 });
 
 test('pollVerificationCode accepts a recent matching mail slightly earlier than minReceivedAt', async () => {

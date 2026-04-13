@@ -165,6 +165,7 @@ export async function pollVerificationCode({
   }
 
   const deadline = Date.now() + timeoutMs;
+  const hasStrictMinReceivedAt = Boolean(parseTimestamp(minReceivedAt));
   let latestMatchingMail = null;
   let latestMatchingResolvedEmail = '';
   let latestMatchingAlias = '';
@@ -234,7 +235,7 @@ export async function pollVerificationCode({
     await sleep(intervalMs);
   }
 
-  if (latestMatchingMail) {
+  if (latestMatchingMail && !hasStrictMinReceivedAt) {
     await addLog(`步骤 ${step}：本轮超时前未等到更新邮件，正在回退解析最近一封匹配的较早${phaseLabel}邮件...`, 'warn');
     const extracted = await tryExtractCodeFromMail(latestMatchingMail, latestMatchingResolvedEmail || email);
     if (extracted?.code) {

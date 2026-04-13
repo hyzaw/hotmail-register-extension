@@ -19,6 +19,10 @@ function getActionText(element) {
     .trim();
 }
 
+function nowIsoTimestamp() {
+  return new Date().toISOString();
+}
+
 function isActionEnabled(element) {
   return Boolean(element)
     && !element.disabled
@@ -716,12 +720,15 @@ async function finishStep3OnPasswordPage(payload) {
   }
 
   const submitButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
+  let verificationRequestedAt = '';
   if (submitButton) {
+    verificationRequestedAt = nowIsoTimestamp();
     await writePendingSignupStep({
       step: 3,
       payload,
       phase: 'submitted',
       startedAt: Date.now(),
+      verificationRequestedAt,
     });
     await pauseForInteraction('beforePrimaryClick');
     utils.clickElement(submitButton);
@@ -744,8 +751,8 @@ async function finishStep3OnPasswordPage(payload) {
     }
     if (helpers.getCodeInput() || isVerificationPageStillVisible() || helpers.isEmailVerificationUrl?.(location.href)) {
       await clearPendingSignupStep();
-      utils.reportComplete(3, { address: payload.address });
-      return { ok: true };
+      utils.reportComplete(3, { address: payload.address, verificationRequestedAt });
+      return { ok: true, verificationRequestedAt };
     }
     const passwordErrorText = getSignupPasswordValidationErrorText();
     if (isSignupPasswordCreationPageReady() && passwordErrorText) {
@@ -765,10 +772,12 @@ async function finishStep3OnPasswordPage(payload) {
 
 async function step3FillCredentials(payload) {
   if (helpers.isEmailVerificationUrl?.(location.href) || isVerificationPageStillVisible()) {
+    const pending = await readPendingSignupStep();
+    const verificationRequestedAt = String(pending?.verificationRequestedAt || '').trim();
     await clearPendingSignupStep();
     utils.log('步骤 3：页面已进入邮箱验证码阶段，本步骤按已完成处理。', 'ok');
-    utils.reportComplete(3, { address: payload.address });
-    return { ok: true };
+    utils.reportComplete(3, { address: payload.address, verificationRequestedAt });
+    return { ok: true, verificationRequestedAt };
   }
 
   const loginFlowResult = await detectExistingAccountLoginFlow(payload);
@@ -841,7 +850,10 @@ async function resumePendingSignupStep() {
   if (pending.step === 3 && pending.payload) {
     if (isVerificationPageStillVisible() || helpers.isEmailVerificationUrl?.(location.href)) {
       await clearPendingSignupStep();
-      utils.reportComplete(3, { address: pending.payload.address });
+      utils.reportComplete(3, {
+        address: pending.payload.address,
+        verificationRequestedAt: String(pending.verificationRequestedAt || '').trim(),
+      });
       return;
     }
     const loginFlowResult = await detectExistingAccountLoginFlow(pending.payload);
@@ -892,7 +904,9 @@ async function step6Login(payload) {
   await pauseForInteraction('afterTyping');
 
   const submitButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
+  let emailSubmitAt = '';
   if (submitButton) {
+    emailSubmitAt = nowIsoTimestamp();
     await pauseForInteraction('beforePrimaryClick');
     utils.clickElement(submitButton);
     await pauseForInteraction('afterLoginSwitch');
@@ -901,6 +915,8 @@ async function step6Login(payload) {
   const startedAt = Date.now();
   let passwordInput = null;
   let oneTimeCodeAttempted = false;
+  let oneTimeCodeRequestedAt = '';
+  let passwordSubmitAt = '';
   while (Date.now() - startedAt < 5000) {
     passwordInput = document.querySelector('input[type="password"]');
     const oneTimeCodeTrigger = findOneTimeCodeLoginTrigger();
@@ -921,10 +937,15 @@ async function step6Login(payload) {
     }
     if (path === 'otp') {
       utils.log('步骤 6：已进入一次性邮箱验证码登录流程。', 'ok');
-      return { ok: true, needsOTP: true };
+      return {
+        ok: true,
+        needsOTP: true,
+        verificationRequestedAt: oneTimeCodeRequestedAt || emailSubmitAt || passwordSubmitAt || '',
+      };
     }
     if (path === 'one_time_code' && !oneTimeCodeAttempted && oneTimeCodeTrigger) {
       oneTimeCodeAttempted = true;
+      oneTimeCodeRequestedAt = nowIsoTimestamp();
       utils.log('步骤 6：检测到一次性验证码登录入口，优先切换...', 'info');
       await pauseForInteraction('beforePrimaryClick');
       utils.clickElement(oneTimeCodeTrigger);
@@ -951,6 +972,7 @@ async function step6Login(payload) {
     await pauseForInteraction('afterTyping');
     const submitPasswordButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
     if (submitPasswordButton) {
+      passwordSubmitAt = nowIsoTimestamp();
       await pauseForInteraction('beforePrimaryClick');
       utils.clickElement(submitPasswordButton);
       await pauseForInteraction('afterPrimarySubmit');
@@ -968,17 +990,29 @@ async function step6Login(payload) {
       }
       if (isLoginVerificationStageReady()) {
         utils.log('步骤 6：密码已提交，准备进入登录验证码阶段。');
-        return { ok: true, needsOTP: true };
+        return {
+          ok: true,
+          needsOTP: true,
+          verificationRequestedAt: passwordSubmitAt || oneTimeCodeRequestedAt || emailSubmitAt || '',
+        };
       }
       await utils.sleep(200);
     }
 
     utils.log('步骤 6：密码已提交，暂未确认页面状态，继续按需进入登录验证码阶段。', 'warn');
-    return { ok: true, needsOTP: true };
+    return {
+      ok: true,
+      needsOTP: true,
+      verificationRequestedAt: passwordSubmitAt || oneTimeCodeRequestedAt || emailSubmitAt || '',
+    };
   }
 
   utils.log('步骤 6：未出现密码输入框，转入登录验证码链路。', 'warn');
-  return { ok: true, needsOTP: true };
+  return {
+    ok: true,
+    needsOTP: true,
+    verificationRequestedAt: oneTimeCodeRequestedAt || emailSubmitAt || passwordSubmitAt || '',
+  };
 }
 
 async function prepareLoginCodeFlow(timeout = 15000) {
@@ -1052,11 +1086,14 @@ async function resendVerificationCode(step, timeout = 45000) {
     if (action && isActionEnabled(action)) {
       utils.log(`步骤 ${step}：重新发送验证码按钮已可用。`);
       await utils.humanPause(350, 900);
+      const clickedAt = nowIsoTimestamp();
       triggerNativeResendAction(action);
       await utils.sleep(1200);
       return {
         resent: true,
         buttonText: getActionText(action),
+        clickedAt,
+        verificationRequestedAt: clickedAt,
       };
     }
 

@@ -28,6 +28,8 @@ export const DEFAULT_RUNTIME = {
   authTabId: null,
   managementOauthState: '',
   localhostUrl: '',
+  signupVerificationRequestedAt: '',
+  loginVerificationRequestedAt: '',
   lastSignupCode: '',
   lastLoginCode: '',
   lastSignupMail: null,
