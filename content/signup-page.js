@@ -193,6 +193,16 @@ function isAddPhonePageReady() {
   return ADD_PHONE_PAGE_PATTERN.test(getPageTextSnapshot());
 }
 
+function isAppPhoneUrl(href = location.href) {
+  try {
+    const url = new URL(href, location.href);
+    return /\/app-phone(?:[/?#]|$)/i.test(url.pathname)
+      || /\/app\/phone(?:[/?#]|$)/i.test(url.pathname);
+  } catch {
+    return /\/app-phone(?:[/?#]|$)|\/app\/phone(?:[/?#]|$)/i.test(String(href || ''));
+  }
+}
+
 function getVisibleProfileSetupFields() {
   const selectors = [
     'input[name="name"]',
@@ -478,6 +488,11 @@ async function waitForStep5SubmitOutcome(timeout = 15000) {
 
   while (Date.now() - startedAt < timeout) {
     maybeThrowAuthRetryErrorPage(5);
+    if (isAppPhoneUrl(location.href)) {
+      // Some signup variants briefly redirect to an app-phone route before continuing.
+      // Treat it as "advanced" so we can proceed to step 6 without waiting for a full load.
+      return { success: true, appPhonePage: true };
+    }
     const errorText = getStep5ErrorText();
     if (errorText) {
       return { invalidProfile: true, errorText };
@@ -1430,6 +1445,10 @@ async function step5FillProfile() {
     utils.log('步骤 5：页面已提前进入 OAuth 授权页，跳过资料填写。', 'warn');
     return buildConsentReachedResult();
   }
+  if (isAppPhoneUrl(location.href)) {
+    utils.log('步骤 5：当前已跳转到 app-phone，跳过资料填写等待，直接进入 OAuth。', 'warn');
+    return { ok: true, reachedConsent: false, appPhonePage: true };
+  }
 
   const clearAndFillInputValue = async (input, value, { verify = null, attempts = 3 } = {}) => {
     if (!input) return false;
@@ -1751,6 +1770,25 @@ async function step5FillProfile() {
   await pauseForInteraction('beforeProfileSubmit');
   utils.clickElement(submitButton);
   utils.log('步骤 5：资料已提交，正在等待页面结果...');
+
+  // If the router moves to a phone-related route after submit, respond ASAP so the background can
+  // refresh OAuth without waiting for that page to finish loading (avoids message port close).
+  const redirectDeadline = Date.now() + 3000;
+  while (Date.now() < redirectDeadline) {
+    if (isAddPhonePageReady()) {
+      utils.log('步骤 5：检测到跳转到添加手机号页，跳过等待，直接进入 OAuth。', 'warn');
+      return { ok: true, reachedConsent: false, addPhonePage: true, earlyRedirect: true };
+    }
+    if (isAppPhoneUrl(location.href)) {
+      utils.log('步骤 5：检测到跳转到 app-phone，跳过等待，直接进入 OAuth。', 'warn');
+      return { ok: true, reachedConsent: false, appPhonePage: true, earlyRedirect: true };
+    }
+    if (isStep8Ready()) {
+      return buildConsentReachedResult();
+    }
+    await utils.sleep(80);
+  }
+
   await pauseForInteraction('afterProfileSubmit');
 
   const outcome = await waitForStep5SubmitOutcome();
@@ -1834,6 +1872,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         url: location.href,
         reachedConsent: Boolean(isStep8Ready()),
         addPhoneRequired: Boolean(isAddPhonePageReady()),
+        appPhoneUrl: Boolean(isAppPhoneUrl(location.href)),
         aboutYouUrl: Boolean(isAboutYouUrl(location.href)),
         aboutYouReady: Boolean(isAboutYouPageReady()),
         profileReady: Boolean(isProfileSetupPageReady()),
