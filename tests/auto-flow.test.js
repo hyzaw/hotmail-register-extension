@@ -213,6 +213,56 @@ test('runSingleAutoFlow skips signup verification when the auth tab URL is alrea
   ]);
 });
 
+test('runSingleAutoFlow skips fillLastCode when signup polling is short-circuited by profile page', async () => {
+  const calls = [];
+
+  const result = await runSingleAutoFlow({
+    autoImport: false,
+    actions: {
+      async prepareNextAccount() {
+        calls.push('prepareNextAccount');
+        return { address: 'user@hotmail.com' };
+      },
+      async refreshOauthFromVps() {
+        calls.push('refreshOauthFromVps');
+      },
+      async findCurrentEmailRecord() {
+        calls.push('findCurrentEmailRecord');
+        return { id: 1, address: 'user@hotmail.com' };
+      },
+      async openOauthUrl() {
+        calls.push('openOauthUrl');
+      },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+      },
+      async executeFinalVerifyStep() {
+        calls.push('executeFinalVerifyStep');
+      },
+      async pollVerificationCode(phase) {
+        calls.push(`pollVerificationCode:${phase}`);
+        if (phase === 'signup') {
+          return { ok: true, skippedForProfile: true, url: 'https://auth.openai.com/about-you' };
+        }
+        return { code: '654321' };
+      },
+      async fillLastCode(phase) {
+        calls.push(`fillLastCode:${phase}`);
+      },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) {
+        calls.push(`log:${message}`);
+      },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.ok(!calls.includes('fillLastCode:signup'), 'should not attempt to fill signup code when profile is already required');
+});
+
 test('runSingleAutoFlow jumps to login flow when step 3 detects existing account login path', async () => {
   const calls = [];
 

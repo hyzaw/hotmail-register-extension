@@ -44,6 +44,10 @@ function hasProfileCompletionRequirement(result) {
   return Boolean(result?.needsProfileCompletion);
 }
 
+function wasVerificationShortCircuited(result) {
+  return Boolean(result?.skippedForProfile || result?.reachedConsent || result?.addPhoneRequired);
+}
+
 async function loginWithProfileCompletion({
   addLog,
   checkAutoControl,
@@ -81,7 +85,20 @@ async function loginWithProfileCompletion({
     }
 
     await checkAutoControl();
-    await pollVerificationCode('login');
+    const loginPollResult = await pollVerificationCode('login');
+    if (wasVerificationShortCircuited(loginPollResult)) {
+      if (loginPollResult?.skippedForProfile) {
+        profileAttempts += 1;
+        await addLog('步骤 7：检测到资料页（轮询期间跳转），返回步骤 5 补全资料');
+        await checkAutoControl();
+        await executeSignupStep(5);
+        if (profileAttempts >= normalizedMaxProfileAttempts) {
+          return { ...(loginPollResult || {}), needsProfileCompletion: true, profileLoopExceeded: true };
+        }
+        continue;
+      }
+      return loginPollResult;
+    }
     await checkAutoControl();
     const loginCodeResult = await fillLastCode('login');
     if (hasAddPhoneRequirement(loginCodeResult)) {
@@ -113,7 +130,10 @@ async function refreshOauthAndLogin({ addLog, checkAutoControl, executeSignupSte
   }
 
   await checkAutoControl();
-  await pollVerificationCode('login');
+  const loginPollResult = await pollVerificationCode('login');
+  if (wasVerificationShortCircuited(loginPollResult)) {
+    return loginPollResult;
+  }
   await checkAutoControl();
   return fillLastCode('login');
 }
@@ -159,7 +179,10 @@ async function continueFromLoginAfterStep3({ addLog, checkAutoControl, executeSi
   }
   if (loginStep6Result?.needsOTP !== false) {
     await checkAutoControl();
-    await pollVerificationCode('login');
+    const loginPollResult = await pollVerificationCode('login');
+    if (wasVerificationShortCircuited(loginPollResult)) {
+      return loginPollResult;
+    }
     await checkAutoControl();
     const loginCodeResult = await fillLastCode('login');
     if (hasAddPhoneRequirement(loginCodeResult)) {
@@ -287,10 +310,16 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
       }
     } else {
       await checkAutoControl();
-      await pollVerificationCode('signup');
-      await checkAutoControl();
-      const signupCodeResult = await fillLastCode('signup');
-      if (hasReachedConsent(signupCodeResult)) {
+      const signupPollResult = await pollVerificationCode('signup');
+      if (hasAddPhoneRequirement(signupPollResult)) {
+        return abandonAccountForAddPhone({
+          addLog,
+          checkAutoControl,
+          completeCurrentAccount,
+          step: 4,
+        });
+      }
+      if (hasReachedConsent(signupPollResult)) {
         return finalizeFromConsent({
           addLog,
           checkAutoControl,
@@ -298,6 +327,21 @@ export async function runSingleAutoFlow({ actions = {} } = {}) {
           executeFinalVerifyStep,
           completeCurrentAccount,
         });
+      }
+      if (!signupPollResult?.skippedForProfile) {
+        await checkAutoControl();
+        const signupCodeResult = await fillLastCode('signup');
+        if (hasReachedConsent(signupCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+          });
+        }
+      } else {
+        await addLog('步骤 4：轮询期间检测到已进入资料页，跳过注册码阶段', 'warn');
       }
     }
     await checkAutoControl();
@@ -488,10 +532,17 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
       }
     } else {
       await checkAutoControl();
-      await pollVerificationCode('signup');
-      await checkAutoControl();
-      const signupCodeResult = await fillLastCode('signup');
-      if (hasReachedConsent(signupCodeResult)) {
+      const signupPollResult = await pollVerificationCode('signup');
+      if (hasAddPhoneRequirement(signupPollResult)) {
+        return abandonAccountForAddPhone({
+          addLog,
+          checkAutoControl,
+          completeCurrentAccount,
+          step: 4,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
+      if (hasReachedConsent(signupPollResult)) {
         return finalizeFromConsent({
           addLog,
           checkAutoControl,
@@ -501,32 +552,7 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
           completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
         });
       }
-    }
-  } else if (startStep === 4) {
-    if (typeof actions.getAuthTabUrl === 'function') {
-      try {
-        const currentUrl = String(await actions.getAuthTabUrl() || '');
-        if (/\/about-you(?:[/?#]|$)/i.test(currentUrl)) {
-          await addLog('步骤 4：检测到已落到 about-you 资料页（URL 探测），跳过注册码阶段', 'warn');
-        } else {
-          await checkAutoControl();
-          await pollVerificationCode('signup');
-          await checkAutoControl();
-          const signupCodeResult = await fillLastCode('signup');
-          if (hasReachedConsent(signupCodeResult)) {
-            return finalizeFromConsent({
-              addLog,
-              checkAutoControl,
-              executeSignupStep,
-              executeFinalVerifyStep,
-              completeCurrentAccount,
-              completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
-            });
-          }
-        }
-      } catch {
-        await checkAutoControl();
-        await pollVerificationCode('signup');
+      if (!signupPollResult?.skippedForProfile) {
         await checkAutoControl();
         const signupCodeResult = await fillLastCode('signup');
         if (hasReachedConsent(signupCodeResult)) {
@@ -539,13 +565,107 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
             completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
           });
         }
+      } else {
+        await addLog('步骤 4：轮询期间检测到已进入资料页，跳过注册码阶段', 'warn');
+      }
+    }
+  } else if (startStep === 4) {
+    if (typeof actions.getAuthTabUrl === 'function') {
+      try {
+        const currentUrl = String(await actions.getAuthTabUrl() || '');
+        if (/\/about-you(?:[/?#]|$)/i.test(currentUrl)) {
+          await addLog('步骤 4：检测到已落到 about-you 资料页（URL 探测），跳过注册码阶段', 'warn');
+        } else {
+          await checkAutoControl();
+          const signupPollResult = await pollVerificationCode('signup');
+          if (hasAddPhoneRequirement(signupPollResult)) {
+            return abandonAccountForAddPhone({
+              addLog,
+              checkAutoControl,
+              completeCurrentAccount,
+              step: 4,
+              completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+            });
+          }
+          if (hasReachedConsent(signupPollResult)) {
+            return finalizeFromConsent({
+              addLog,
+              checkAutoControl,
+              executeSignupStep,
+              executeFinalVerifyStep,
+              completeCurrentAccount,
+              completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+            });
+          }
+          if (!signupPollResult?.skippedForProfile) {
+            await checkAutoControl();
+            const signupCodeResult = await fillLastCode('signup');
+            if (hasReachedConsent(signupCodeResult)) {
+              return finalizeFromConsent({
+                addLog,
+                checkAutoControl,
+                executeSignupStep,
+                executeFinalVerifyStep,
+                completeCurrentAccount,
+                completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+              });
+            }
+          } else {
+            await addLog('步骤 4：轮询期间检测到已进入资料页，跳过注册码阶段', 'warn');
+          }
+        }
+      } catch {
+        await checkAutoControl();
+        const signupPollResult = await pollVerificationCode('signup');
+        if (hasAddPhoneRequirement(signupPollResult)) {
+          return abandonAccountForAddPhone({
+            addLog,
+            checkAutoControl,
+            completeCurrentAccount,
+            step: 4,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
+        if (hasReachedConsent(signupPollResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
+        if (!signupPollResult?.skippedForProfile) {
+          await checkAutoControl();
+          const signupCodeResult = await fillLastCode('signup');
+          if (hasReachedConsent(signupCodeResult)) {
+            return finalizeFromConsent({
+              addLog,
+              checkAutoControl,
+              executeSignupStep,
+              executeFinalVerifyStep,
+              completeCurrentAccount,
+              completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+            });
+          }
+        } else {
+          await addLog('步骤 4：轮询期间检测到已进入资料页，跳过注册码阶段', 'warn');
+        }
       }
     } else {
       await checkAutoControl();
-      await pollVerificationCode('signup');
-      await checkAutoControl();
-      const signupCodeResult = await fillLastCode('signup');
-      if (hasReachedConsent(signupCodeResult)) {
+      const signupPollResult = await pollVerificationCode('signup');
+      if (hasAddPhoneRequirement(signupPollResult)) {
+        return abandonAccountForAddPhone({
+          addLog,
+          checkAutoControl,
+          completeCurrentAccount,
+          step: 4,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
+      if (hasReachedConsent(signupPollResult)) {
         return finalizeFromConsent({
           addLog,
           checkAutoControl,
@@ -554,6 +674,22 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
           completeCurrentAccount,
           completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
         });
+      }
+      if (!signupPollResult?.skippedForProfile) {
+        await checkAutoControl();
+        const signupCodeResult = await fillLastCode('signup');
+        if (hasReachedConsent(signupCodeResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
+      } else {
+        await addLog('步骤 4：轮询期间检测到已进入资料页，跳过注册码阶段', 'warn');
       }
     }
   }
@@ -592,10 +728,8 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
     }
   } else if (startStep === 7) {
     await checkAutoControl();
-    await pollVerificationCode('login');
-    await checkAutoControl();
-    const loginCodeResult = await fillLastCode('login');
-    if (hasAddPhoneRequirement(loginCodeResult)) {
+    const loginPollResult = await pollVerificationCode('login');
+    if (hasAddPhoneRequirement(loginPollResult)) {
       return abandonAccountForAddPhone({
         addLog,
         checkAutoControl,
@@ -604,8 +738,18 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
         completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
       });
     }
-    if (hasProfileCompletionRequirement(loginCodeResult)) {
-      await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+    if (hasReachedConsent(loginPollResult)) {
+      return finalizeFromConsent({
+        addLog,
+        checkAutoControl,
+        executeSignupStep,
+        executeFinalVerifyStep,
+        completeCurrentAccount,
+        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+      });
+    }
+    if (loginPollResult?.skippedForProfile) {
+      await addLog('步骤 7：轮询期间检测到资料页，返回步骤 5 补全资料', 'warn');
       await checkAutoControl();
       await executeSignupStep(5);
 
@@ -635,16 +779,61 @@ export async function continueSingleAutoFlow({ state = {}, actions = {} } = {}) 
           completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
         });
       }
-    }
-    if (hasReachedConsent(loginCodeResult)) {
-      return finalizeFromConsent({
-        addLog,
-        checkAutoControl,
-        executeSignupStep,
-        executeFinalVerifyStep,
-        completeCurrentAccount,
-        completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
-      });
+      // In this branch we do not have an OTP to submit; continue to the next steps.
+    } else {
+      await checkAutoControl();
+      const loginCodeResult = await fillLastCode('login');
+      if (hasAddPhoneRequirement(loginCodeResult)) {
+        return abandonAccountForAddPhone({
+          addLog,
+          checkAutoControl,
+          completeCurrentAccount,
+          step: 7,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
+      if (hasProfileCompletionRequirement(loginCodeResult)) {
+        await addLog('步骤 7：检测到资料页，返回步骤 5 补全资料');
+        await checkAutoControl();
+        await executeSignupStep(5);
+
+        const recoveredLoginResult = await loginWithProfileCompletion({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          pollVerificationCode,
+          fillLastCode,
+        });
+        if (hasAddPhoneRequirement(recoveredLoginResult)) {
+          return abandonAccountForAddPhone({
+            addLog,
+            checkAutoControl,
+            completeCurrentAccount,
+            step: 7,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
+        if (hasReachedConsent(recoveredLoginResult)) {
+          return finalizeFromConsent({
+            addLog,
+            checkAutoControl,
+            executeSignupStep,
+            executeFinalVerifyStep,
+            completeCurrentAccount,
+            completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+          });
+        }
+      }
+      if (hasReachedConsent(loginCodeResult)) {
+        return finalizeFromConsent({
+          addLog,
+          checkAutoControl,
+          executeSignupStep,
+          executeFinalVerifyStep,
+          completeCurrentAccount,
+          completionMessage: '自动流程继续完成，当前邮箱已标记为已使用',
+        });
+      }
     }
   }
 

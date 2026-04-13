@@ -681,61 +681,94 @@ async function pollCodeForPhase(state, phase, options = {}) {
     state.consumedVerificationMails || {},
     collectVerificationLedgerEmails(state)
   );
-  const result = await pollVerificationCodeWithResend({
-    step,
-    maxRounds: 3,
-    waitBeforePollMs: 3000,
-    addLog,
-    resendVerificationCode: async (targetStep) => {
-      await ensureAutoFlowActive();
-      await addLog(`步骤 ${targetStep}：正在请求新的验证码...`, 'warn');
-      const resendResult = await sendToActiveAuthTab({
-        type: 'RESEND_VERIFICATION_CODE',
-        step: targetStep,
-        payload: {},
-      });
-      const requestedAt = String(
-        resendResult?.verificationRequestedAt
-        || resendResult?.clickedAt
-        || new Date().toISOString()
-      ).trim();
-      await setRuntime({ [getVerificationRequestedAtRuntimeKey(phase)]: requestedAt });
-      return requestedAt;
-    },
-    pollVerificationCode: async ({ minReceivedAt, round }) => {
-      await ensureAutoFlowActive();
-      return pollVerificationCode({
-        client,
-        detailFetcher: client,
-        email: account.address,
-        intervalMs: state.pollIntervalSec * 1000,
-        timeoutMs: pollTimeoutMs,
-        minReceivedAt: minReceivedAt || minReceivedAtOverride || verificationRequestedAt || phaseStartedAt,
-        freshnessGraceMs: 0,
-        mailboxContext: {
-          isTemp: Boolean(account?.isTemp || emailRecord?.isTemp),
-        },
-        addLog,
-        step,
-        round,
-        maxRounds: 3,
-        phaseLabel,
-        unreadOnly: true,
-        consumedMessageIds,
-        shouldContinue: async () => {
-          await ensureAutoFlowActive();
-          // Don't just wait for mail: if the page itself shows an error, abort immediately and retry the flow.
-          await sendToActiveAuthTab({ type: 'CHECK_PAGE_HEALTH', step, payload: {} }, { timeoutMs: 1500, intervalMs: 150 });
-          return true;
-        },
-        match: {
-          keyword: state.mailKeyword,
-          fromIncludes: state.mailFromKeyword,
-          subjectContains: '',
-        },
-      });
-    },
-  });
+
+  const stageError = (tag, message) => new Error(`[PAGE_STAGE:${tag}] ${message}`);
+
+  let result = null;
+  try {
+    result = await pollVerificationCodeWithResend({
+      step,
+      maxRounds: 3,
+      waitBeforePollMs: 3000,
+      addLog,
+      resendVerificationCode: async (targetStep) => {
+        await ensureAutoFlowActive();
+        await addLog(`步骤 ${targetStep}：正在请求新的验证码...`, 'warn');
+        const resendResult = await sendToActiveAuthTab({
+          type: 'RESEND_VERIFICATION_CODE',
+          step: targetStep,
+          payload: {},
+        });
+        const requestedAt = String(
+          resendResult?.verificationRequestedAt
+          || resendResult?.clickedAt
+          || new Date().toISOString()
+        ).trim();
+        await setRuntime({ [getVerificationRequestedAtRuntimeKey(phase)]: requestedAt });
+        return requestedAt;
+      },
+      pollVerificationCode: async ({ minReceivedAt, round }) => {
+        await ensureAutoFlowActive();
+        return pollVerificationCode({
+          client,
+          detailFetcher: client,
+          email: account.address,
+          intervalMs: state.pollIntervalSec * 1000,
+          timeoutMs: pollTimeoutMs,
+          minReceivedAt: minReceivedAt || minReceivedAtOverride || verificationRequestedAt || phaseStartedAt,
+          freshnessGraceMs: 0,
+          mailboxContext: {
+            isTemp: Boolean(account?.isTemp || emailRecord?.isTemp),
+          },
+          addLog,
+          step,
+          round,
+          maxRounds: 3,
+          phaseLabel,
+          unreadOnly: true,
+          consumedMessageIds,
+          shouldContinue: async () => {
+            await ensureAutoFlowActive();
+            // Don't just wait for mail: if the page itself shows an error or has already advanced, abort immediately.
+            const health = await sendToActiveAuthTab(
+              { type: 'CHECK_PAGE_HEALTH', step, payload: {} },
+              { timeoutMs: 1500, intervalMs: 150 },
+            );
+            if (health?.reachedConsent) {
+              throw stageError('consent', `步骤 ${step}：页面已进入 OAuth 授权阶段，停止轮询${phaseLabel}。URL: ${health?.url || ''}`);
+            }
+            if (health?.addPhoneRequired) {
+              throw stageError('add_phone', `步骤 ${step}：页面要求添加手机号，停止轮询${phaseLabel}。URL: ${health?.url || ''}`);
+            }
+            if (health?.aboutYouUrl || health?.aboutYouReady || health?.profileReady) {
+              throw stageError('profile', `步骤 ${step}：页面已进入资料页，停止轮询${phaseLabel}。URL: ${health?.url || ''}`);
+            }
+            return true;
+          },
+          match: {
+            keyword: state.mailKeyword,
+            fromIncludes: state.mailFromKeyword,
+            subjectContains: '',
+          },
+        });
+      },
+    });
+  } catch (error) {
+    const message = error?.message || String(error || '');
+    if (message.includes('[PAGE_STAGE:profile]')) {
+      await addLog(`步骤 ${step}：检测到已进入资料页，本次跳过${phaseLabel}轮询。`, 'warn');
+      return { ok: true, skippedForProfile: true, url: (await getActiveAuthTab().catch(() => null))?.url || '' };
+    }
+    if (message.includes('[PAGE_STAGE:consent]')) {
+      await addLog(`步骤 ${step}：检测到已进入 OAuth 授权页，本次跳过${phaseLabel}轮询。`, 'warn');
+      return { ok: true, reachedConsent: true, url: (await getActiveAuthTab().catch(() => null))?.url || '' };
+    }
+    if (message.includes('[PAGE_STAGE:add_phone]')) {
+      await addLog(`步骤 ${step}：检测到需要添加手机号，本次跳过${phaseLabel}轮询。`, 'warn');
+      return { ok: true, addPhoneRequired: true, url: (await getActiveAuthTab().catch(() => null))?.url || '' };
+    }
+    throw error;
+  }
 
   if (phase === 'signup') {
     await setRuntime({

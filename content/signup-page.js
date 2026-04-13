@@ -1761,7 +1761,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     CHECK_PAGE_HEALTH: async () => {
       maybeThrowAuthRetryErrorPage(message.step);
       maybeThrowBlockingVerificationWaitError(message.step);
-      return { ok: true, healthy: true, url: location.href };
+      return {
+        ok: true,
+        healthy: true,
+        url: location.href,
+        reachedConsent: Boolean(isStep8Ready()),
+        addPhoneRequired: Boolean(isAddPhonePageReady()),
+        aboutYouUrl: Boolean(isAboutYouUrl(location.href)),
+        aboutYouReady: Boolean(isAboutYouPageReady()),
+        profileReady: Boolean(isProfileSetupPageReady()),
+        verificationVisible: Boolean(isVerificationPageStillVisible()),
+        hasCodeInput: Boolean(helpers.getCodeInput()),
+      };
     },
   };
 

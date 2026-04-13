@@ -14,7 +14,8 @@ export async function pollVerificationCodeWithResend({
   const isBlockingPageError = (error) => {
     const message = error?.message || String(error || '');
     return message.includes('[AUTH_ERROR_SCREEN:retry_page]')
-      || message.includes('[PAGE_ERROR:blocking_verification_wait]');
+      || message.includes('[PAGE_ERROR:blocking_verification_wait]')
+      || message.includes('[PAGE_STAGE:');
   };
 
   let minReceivedAt = '';
