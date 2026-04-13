@@ -69,6 +69,8 @@ test('isProfileSetupPageText matches age and birthday profile screens', () => {
   assert.equal(isProfileSetupPageText('Full name Birthday'), true);
   assert.equal(isProfileSetupPageText('Age Continue'), true);
   assert.equal(isProfileSetupPageText('Enter your email to continue'), false);
+  assert.equal(isProfileSetupPageText('Check your messages to continue'), false);
+  assert.equal(isProfileSetupPageText('OpenAI management center'), false);
 });
 
 test('isSignupLandingPageText matches create-account landing screens', () => {

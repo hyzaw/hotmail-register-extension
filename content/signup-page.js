@@ -567,6 +567,11 @@ async function step3FillCredentials(payload) {
     return { ok: true };
   }
 
+  const loginFlowResult = await detectExistingAccountLoginFlow(payload);
+  if (loginFlowResult) {
+    return loginFlowResult;
+  }
+
   if (isProfileSetupPageReady()) {
     clearPendingSignupStep();
     utils.log('步骤 3：页面已直接进入资料页，后续将跳过注册码阶段。', 'warn');
@@ -604,9 +609,9 @@ async function step3FillCredentials(payload) {
     await utils.sleep(800);
   }
 
-  const loginFlowResult = await detectExistingAccountLoginFlow(payload);
-  if (loginFlowResult) {
-    return loginFlowResult;
+  const loginFlowAfterEmailSubmitResult = await detectExistingAccountLoginFlow(payload);
+  if (loginFlowAfterEmailSubmitResult) {
+    return loginFlowAfterEmailSubmitResult;
   }
 
   return finishStep3OnPasswordPage(payload);

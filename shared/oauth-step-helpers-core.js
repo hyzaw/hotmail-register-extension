@@ -125,7 +125,7 @@ export function isSignupPasswordValidationErrorText(text) {
 }
 
 export function isProfileSetupPageText(text) {
-  return /first\s+name|last\s+name|full\s+name|given[-\s]*name|family[-\s]*name|birthday|birth\s*date|出生日期|生日|年龄|age/i.test(normalizeInlineText(text));
+  return /\bfirst\s+name\b|\blast\s+name\b|\bfull\s+name\b|\bgiven[-\s]*name\b|\bfamily[-\s]*name\b|\bbirthday\b|\bbirth\s*date\b|\bage\b|出生日期|生日|年龄/i.test(normalizeInlineText(text));
 }
 
 export function isLoginPasswordPageText(text) {
