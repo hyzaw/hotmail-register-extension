@@ -41,16 +41,18 @@ export function createContentStepSignalRegistry() {
   };
 }
 
-export function settleStepWaiterFromDispatchResult(registry, step, dispatchResult) {
+export function settleStepWaiterFromDispatchResult(registry, step, dispatchResult, options = {}) {
   if (!registry || !dispatchResult) {
     return false;
   }
+
+  const allowDirectSuccess = options.allowDirectSuccess !== false;
 
   if (dispatchResult.error || dispatchResult.ok === false) {
     return registry.rejectStep(step, new Error(dispatchResult.error || `页面内步骤 ${step} 执行失败`));
   }
 
-  if (dispatchResult.ok) {
+  if (allowDirectSuccess && dispatchResult.ok) {
     return registry.resolveStep(step, dispatchResult);
   }
 

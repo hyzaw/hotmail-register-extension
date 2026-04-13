@@ -95,6 +95,26 @@ test('isLoginPasswordPageText matches login-only password screens', () => {
   assert.equal(isLoginPasswordPageText('First name Last name Age'), false);
 });
 
+test('shouldTreatPasswordPageAsSignup keeps create-account password pages on signup path', () => {
+  assert.equal(
+    oauthStepHelpersModule.shouldTreatPasswordPageAsSignup?.({
+      url: 'https://auth.openai.com/create-account',
+      text: 'Enter your password Forgot password',
+      hasPasswordInput: true,
+    }),
+    true
+  );
+
+  assert.equal(
+    oauthStepHelpersModule.shouldTreatPasswordPageAsSignup?.({
+      url: 'https://auth.openai.com/u/login/password?state=1',
+      text: 'Enter your password Forgot password',
+      hasPasswordInput: true,
+    }),
+    false
+  );
+});
+
 test('isSignupFlowUrl matches signup routes and hints only', () => {
   assert.equal(isSignupFlowUrl('https://auth.openai.com/u/signup/identifier?state=1'), true);
   assert.equal(isSignupFlowUrl('https://auth.openai.com/create-account/password?state=1'), true);

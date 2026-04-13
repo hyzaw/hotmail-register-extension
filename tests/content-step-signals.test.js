@@ -36,3 +36,24 @@ test('settleStepWaiterFromDispatchResult resolves waiter when content script ret
   );
   assert.deepEqual(await waiter, { ok: true, alreadyOnSignup: true });
 });
+
+test('settleStepWaiterFromDispatchResult can ignore direct success when explicit page signal is required', async () => {
+  const registry = createContentStepSignalRegistry();
+  const waiter = registry.waitForStep(2, 1000);
+
+  assert.equal(
+    settleStepWaiterFromDispatchResult(
+      registry,
+      2,
+      { ok: true, alreadyOnSignup: true },
+      { allowDirectSuccess: false }
+    ),
+    false
+  );
+
+  setTimeout(() => {
+    registry.resolveStep(2, { ok: true, fromSignal: true });
+  }, 10);
+
+  assert.deepEqual(await waiter, { ok: true, fromSignal: true });
+});

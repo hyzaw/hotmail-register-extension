@@ -1219,7 +1219,9 @@ const handlers = {
           sendToActiveAuthTab,
           sendToTab,
         }).then((dispatchResult) => {
-          settleStepWaiterFromDispatchResult(contentStepSignals, step, dispatchResult);
+          settleStepWaiterFromDispatchResult(contentStepSignals, step, dispatchResult, {
+            allowDirectSuccess: false,
+          });
         }).catch((error) => {
           if (!isMissingReceiverError(error)) {
             contentStepSignals.rejectStep(step, error);

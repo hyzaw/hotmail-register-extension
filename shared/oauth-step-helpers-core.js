@@ -132,6 +132,23 @@ export function isLoginPasswordPageText(text) {
   return /enter\s+your\s+password|incorrect\s+email\s+address\s+or\s+password|forgot\s+password|log\s+in\s+with\s+a\s+one[-\s]*time\s+code/i.test(normalizeInlineText(text));
 }
 
+export function shouldTreatPasswordPageAsSignup({ url = '', text = '', hasPasswordInput = false } = {}) {
+  if (!hasPasswordInput) {
+    return false;
+  }
+
+  const normalized = normalizeInlineText(text);
+  if (isSignupFlowUrl(url)) {
+    return true;
+  }
+
+  if (isLoginFlowUrl(url)) {
+    return false;
+  }
+
+  return isSignupPageText(normalized) && !isLoginPasswordPageText(normalized);
+}
+
 export function isExistingAccountSignalText(text) {
   return /account\s+associated\s+with\s+this\s+email\s+address\s+already\s+exists|email\s+address.*already\s+exists|this\s+email\s+address\s+is\s+already\s+in\s+use|该电子邮件地址已被使用|该邮箱已被使用|账户已存在|帐户已存在/i.test(normalizeInlineText(text));
 }
@@ -238,6 +255,7 @@ export const oauthStepHelpers = {
   normalizeInlineText,
   parseUrl,
   describeStep3LoginFlowState,
+  shouldTreatPasswordPageAsSignup,
   shouldTreatLoginFlowAsExistingAccount,
   shouldUseStep8ContinueButton,
 };

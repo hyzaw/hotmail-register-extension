@@ -267,13 +267,24 @@ function isSignupPasswordCreationPageReady() {
   return Boolean(
     passwordInput
     && isVisibleElement(passwordInput)
-    && (helpers.isSignupFlowUrl?.(location.href) || helpers.isSignupPageText(pageText))
-    && !helpers.isLoginPasswordPageText(pageText)
+    && helpers.shouldTreatPasswordPageAsSignup?.({
+      url: location.href,
+      text: pageText,
+      hasPasswordInput: true,
+    })
   );
 }
 
 function isLoginFlowPageReady() {
   const pageText = getPageTextSnapshot();
+  const passwordInput = helpers.getPasswordInput();
+  if (passwordInput && isVisibleElement(passwordInput) && helpers.shouldTreatPasswordPageAsSignup?.({
+    url: location.href,
+    text: pageText,
+    hasPasswordInput: true,
+  })) {
+    return false;
+  }
   return Boolean(
     helpers.isLoginFlowUrl?.(location.href)
     || helpers.isLoginPasswordPageText(pageText)
