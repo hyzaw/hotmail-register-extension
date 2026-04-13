@@ -16,7 +16,7 @@ import { createLuckmailClient } from './shared/luckmail-client.js';
 import { resolveLoginPassword } from './shared/login-password.js';
 import { createContentStepSignalRegistry, settleStepWaiterFromDispatchResult } from './shared/content-step-signals.js';
 import { chooseOauthTabCandidate, listAuthTabIds } from './shared/open-oauth-target.js';
-import { createManagementApiClient } from './shared/management-api-client.js';
+import { createManagementApiClient, resolveManagementPanelUrl } from './shared/management-api-client.js';
 import { pollManagementAuthStatus } from './shared/management-auth-status.js';
 import { findCompletedLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
 import { decideOauthTabNavigation } from './shared/oauth-tab-navigation.js';
@@ -300,6 +300,46 @@ function buildManagementClient(settings) {
     baseUrl: settings.vpsUrl,
     managementKey: settings.vpsPassword,
   });
+}
+
+function isManagementApiAccessDeniedError(error) {
+  const message = String(error?.message || error || '');
+  return /ERR_ACCESS_DENIED|The requested URL could not be retrieved|Access control configuration prevents your request from being allowed|<title>ERROR:\s*The requested URL could not be retrieved<\/title>|<b>Access Denied\.<\/b>/i.test(message);
+}
+
+async function executeVpsPanelStep(step, state, payload = {}, {
+  preserveExistingTab = false,
+  timeoutMs = 45000,
+} = {}) {
+  const managementPageUrl = resolveManagementPanelUrl(state.vpsUrl);
+  const tabId = await openOrReusePanelTab(
+    'vps-panel',
+    managementPageUrl,
+    [
+      'content/utils.js',
+      'shared/oauth-step-helpers-runtime.js',
+      'shared/step9-status.js',
+      'content/vps-panel.js',
+    ],
+    { preserveExistingTab }
+  );
+
+  const waitForPageStep = contentStepSignals.waitForStep(step, timeoutMs);
+  void sendToReadySource('vps-panel', tabId, {
+    type: 'EXECUTE_STEP',
+    step,
+    payload,
+  }, timeoutMs).then((dispatchResult) => {
+    settleStepWaiterFromDispatchResult(contentStepSignals, step, dispatchResult, {
+      allowDirectSuccess: false,
+    });
+  }).catch((error) => {
+    if (!isMissingReceiverError(error)) {
+      contentStepSignals.rejectStep(step, error);
+    }
+  });
+
+  return waitForPageStep;
 }
 
 function getSelectedAccountAddress(state = {}) {
@@ -1012,14 +1052,35 @@ const handlers = {
       throw new Error('请先填写管理地址');
     }
     return runManagedStep(1, async () => {
-      const client = buildManagementClient(state);
-      const result = await client.getCodexAuthUrl({ isWebUi: true });
+      let result = null;
+      try {
+        const client = buildManagementClient(state);
+        result = await client.getCodexAuthUrl({ isWebUi: true });
+      } catch (error) {
+        if (!isManagementApiAccessDeniedError(error)) {
+          throw error;
+        }
+
+        await addLog('步骤 1：管理 API 请求被代理拦截，回退到 CPA 页面获取 OAuth 链接...', 'warn');
+        const pageResult = await executeVpsPanelStep(1, state, {
+          vpsPassword: state.vpsPassword,
+        });
+        result = {
+          url: pageResult?.oauthUrl || '',
+          state: '',
+        };
+      }
+
       await setSettings({ oauthUrl: result.url });
       await setRuntime({
         managementOauthState: result.state,
         localhostUrl: '',
       });
-      await addLog(`步骤 1：管理 API 已返回 OAuth state=${result.state}`, 'info');
+      if (result.state) {
+        await addLog(`步骤 1：管理 API 已返回 OAuth state=${result.state}`, 'info');
+      } else {
+        await addLog('步骤 1：已通过 CPA 页面拿到 OAuth 链接，本轮后续将改走 CPA 页面校验。', 'warn');
+      }
       return {
         oauthUrl: result.url,
         oauthState: result.state,
@@ -1237,32 +1298,55 @@ const handlers = {
   },
   async EXECUTE_FINAL_VERIFY_STEP() {
     const state = await getState();
-    if (!state.managementOauthState) {
-      throw new Error('缺少 OAuth state，请先重新执行步骤 1。');
-    }
     if (!state.vpsUrl) {
       throw new Error('请先填写管理地址');
     }
     return runManagedStep(9, async () => {
-      const client = buildManagementClient(state);
-      const result = await pollManagementAuthStatus({
-        state: state.managementOauthState,
-        timeoutMs: 30000,
-        intervalMs: 1000,
-        getAuthStatus: ({ state: oauthState }) => client.getAuthStatus({ state: oauthState }),
-        onWait: async ({ attempt }) => {
-          if (attempt === 1 || attempt % 5 === 0) {
-            await addLog(`步骤 9：管理 API 仍在等待 OAuth 完成，state=${state.managementOauthState}，第 ${attempt} 次轮询`, 'info');
-          }
-        },
-      });
-      return {
-        oauthState: state.managementOauthState,
-        verifiedStatus: result.status || 'ok',
-      };
+      if (!state.managementOauthState) {
+        await addLog('步骤 9：当前没有 OAuth state，直接回退到 CPA 页面校验。', 'warn');
+        return executeVpsPanelStep(9, state, {
+          vpsPassword: state.vpsPassword,
+          localhostUrl: state.localhostUrl,
+        }, {
+          preserveExistingTab: true,
+          timeoutMs: 60000,
+        });
+      }
+
+      try {
+        const client = buildManagementClient(state);
+        const result = await pollManagementAuthStatus({
+          state: state.managementOauthState,
+          timeoutMs: 30000,
+          intervalMs: 1000,
+          getAuthStatus: ({ state: oauthState }) => client.getAuthStatus({ state: oauthState }),
+          onWait: async ({ attempt }) => {
+            if (attempt === 1 || attempt % 5 === 0) {
+              await addLog(`步骤 9：管理 API 仍在等待 OAuth 完成，state=${state.managementOauthState}，第 ${attempt} 次轮询`, 'info');
+            }
+          },
+        });
+        return {
+          oauthState: state.managementOauthState,
+          verifiedStatus: result.status || 'ok',
+        };
+      } catch (error) {
+        if (!isManagementApiAccessDeniedError(error)) {
+          throw error;
+        }
+
+        await addLog('步骤 9：管理 API 轮询被代理拦截，回退到 CPA 页面校验...', 'warn');
+        return executeVpsPanelStep(9, state, {
+          vpsPassword: state.vpsPassword,
+          localhostUrl: state.localhostUrl,
+        }, {
+          preserveExistingTab: true,
+          timeoutMs: 60000,
+        });
+      }
     }, {
-      startMessage: '步骤 9：正在通过管理 API 轮询 OAuth 状态...',
-      successMessage: '步骤 9：管理 API 校验完成',
+      startMessage: '步骤 9：正在校验 OAuth 状态...',
+      successMessage: '步骤 9：OAuth 状态校验完成',
     });
   },
   async SYNC_CURRENT_ACCOUNT() {
@@ -1359,16 +1443,25 @@ const handlers = {
             const oauthState = String(
               latestState.managementOauthState || state.managementOauthState || ''
             ).trim();
-            if (!oauthState) {
-              throw new Error('步骤 8：缺少 OAuth state，无法向管理 API 提交回调。');
+            let submittedToManagementApi = false;
+            if (oauthState) {
+              try {
+                const client = buildManagementClient(latestState);
+                await client.submitOAuthCallback({
+                  provider: 'codex',
+                  redirectUrl: matchedUrl,
+                  state: oauthState,
+                });
+                submittedToManagementApi = true;
+              } catch (error) {
+                if (!isManagementApiAccessDeniedError(error)) {
+                  throw error;
+                }
+                await addLog('步骤 8：管理 API 提交回调被代理拦截，已保留 localhost 链接，后续转 CPA 页面校验。', 'warn');
+              }
+            } else {
+              await addLog('步骤 8：当前没有 OAuth state，已保留 localhost 链接，后续转 CPA 页面校验。', 'warn');
             }
-
-            const client = buildManagementClient(latestState);
-            await client.submitOAuthCallback({
-              provider: 'codex',
-              redirectUrl: matchedUrl,
-              state: oauthState,
-            });
 
             settled = true;
             cleanupListener();
@@ -1376,7 +1469,9 @@ const handlers = {
             await setRuntime({ localhostUrl: matchedUrl });
             await setStepStatus(8, 'completed');
             await addLog(`步骤 8：已捕获 localhost 回调 ${matchedUrl.slice(0, 80)}...`, 'ok');
-            await addLog(`步骤 8：已向管理 API 提交 OAuth 回调，state=${oauthState}`, 'info');
+            if (submittedToManagementApi) {
+              await addLog(`步骤 8：已向管理 API 提交 OAuth 回调，state=${oauthState}`, 'info');
+            }
             resolve({ localhostUrl: matchedUrl });
             return true;
           } catch (error) {

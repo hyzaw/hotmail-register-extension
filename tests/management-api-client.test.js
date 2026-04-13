@@ -5,6 +5,7 @@ import {
   buildManagementApiUrl,
   createManagementApiClient,
   resolveManagementApiBaseUrl,
+  resolveManagementPanelUrl,
 } from '../shared/management-api-client.js';
 
 test('resolveManagementApiBaseUrl strips management.html from a web ui url', () => {
@@ -18,6 +19,18 @@ test('buildManagementApiUrl appends management endpoints relative to the base pa
   assert.equal(
     buildManagementApiUrl('http://localhost:8317/management.html#/oauth', 'v0/management/codex-auth-url', { is_webui: 'true' }),
     'http://localhost:8317/v0/management/codex-auth-url?is_webui=true'
+  );
+});
+
+test('resolveManagementPanelUrl normalizes bare api roots back to management oauth page', () => {
+  assert.equal(
+    resolveManagementPanelUrl('http://localhost:8317'),
+    'http://localhost:8317/management.html#/oauth'
+  );
+
+  assert.equal(
+    resolveManagementPanelUrl('http://localhost:8317/management.html#/oauth'),
+    'http://localhost:8317/management.html#/oauth'
   );
 });
 
