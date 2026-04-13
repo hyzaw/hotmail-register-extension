@@ -18,7 +18,7 @@ import { createContentStepSignalRegistry, settleStepWaiterFromDispatchResult } f
 import { chooseOauthTabCandidate, listAuthTabIds } from './shared/open-oauth-target.js';
 import { createManagementApiClient } from './shared/management-api-client.js';
 import { pollManagementAuthStatus } from './shared/management-auth-status.js';
-import { findLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
+import { findCompletedLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
 import { decideOauthTabNavigation } from './shared/oauth-tab-navigation.js';
 import { buildPanelTabOpenPlan } from './shared/panel-tab-plan.js';
 import { decideStep8ClickPlan } from './shared/step8-click-plan.js';
@@ -1326,11 +1326,16 @@ const handlers = {
         let settled = false;
         let callbackSubmitting = false;
         let webNavListener = null;
+        let webRequestListener = null;
 
         const cleanupListener = () => {
           if (webNavListener) {
             chrome.webNavigation.onBeforeNavigate.removeListener(webNavListener);
             webNavListener = null;
+          }
+          if (webRequestListener) {
+            chrome.webRequest.onBeforeRedirect.removeListener(webRequestListener);
+            webRequestListener = null;
           }
         };
 
@@ -1345,7 +1350,7 @@ const handlers = {
         };
 
         const finishStep8WithCallbackUrl = async (url) => {
-          const matchedUrl = findLoopbackCallbackUrl([url]);
+          const matchedUrl = findCompletedLoopbackCallbackUrl([url]);
           if (!matchedUrl || settled || callbackSubmitting) return false;
 
           callbackSubmitting = true;
@@ -1383,11 +1388,29 @@ const handlers = {
         };
 
         const timeout = setTimeout(async () => {
-          await rejectStep8(new Error('120 秒内未捕获到 localhost 回调跳转。'));
+          await rejectStep8(new Error('120 秒内未捕获到 localhost 回调链接。'));
         }, 120000);
 
+        webRequestListener = (details) => {
+          const matchedUrl = findCompletedLoopbackCallbackUrl([details.redirectUrl]);
+          if (matchedUrl) {
+            void finishStep8WithCallbackUrl(matchedUrl);
+          }
+        };
+
+        chrome.webRequest.onBeforeRedirect.addListener(
+          webRequestListener,
+          {
+            urls: [
+              'https://auth.openai.com/*',
+              'https://auth0.openai.com/*',
+              'https://accounts.openai.com/*',
+            ],
+          },
+        );
+
         webNavListener = (details) => {
-          const matchedUrl = findLoopbackCallbackUrl([details.url]);
+          const matchedUrl = findCompletedLoopbackCallbackUrl([details.url]);
           if (matchedUrl) {
             void finishStep8WithCallbackUrl(matchedUrl);
           }
@@ -1396,7 +1419,7 @@ const handlers = {
         chrome.webNavigation.onBeforeNavigate.addListener(webNavListener);
 
         try {
-          await addLog('步骤 8：正在监听 localhost 回调地址...', 'info');
+          await addLog('步骤 8：正在监听 localhost 回调链接并准备直传管理端...', 'info');
           const authTab = await getActiveAuthTab();
           const clickResult = await chrome.tabs.sendMessage(authTab.id, {
             type: 'STEP8_FIND_AND_CLICK',
@@ -1435,7 +1458,7 @@ const handlers = {
           (async () => {
             while (!settled) {
               const tab = await chrome.tabs.get(authTab.id).catch(() => null);
-              const matchedUrl = findLoopbackCallbackUrl([tab?.url || '']);
+              const matchedUrl = findCompletedLoopbackCallbackUrl([tab?.url || '']);
               if (matchedUrl) {
                 await finishStep8WithCallbackUrl(matchedUrl);
                 return;

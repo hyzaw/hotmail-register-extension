@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import * as oauthStepHelpersModule from '../shared/oauth-step-helpers-core.js';
 
 import {
+  findCompletedLoopbackCallbackUrl,
   findLoopbackCallbackUrl,
   isEmailVerificationUrl,
   isExistingAccountSignalText,
+  isCompletedLoopbackCallbackUrl,
   isExplicitSignupFlowPageText,
   isLoginFlowUrl,
   isLoginPasswordPageText,
@@ -33,6 +35,23 @@ test('findLoopbackCallbackUrl returns the first matching callback URL', () => {
   ]);
 
   assert.equal(result, 'http://localhost:3000/callback?code=1');
+});
+
+test('isCompletedLoopbackCallbackUrl only matches localhost callbacks with oauth result params', () => {
+  assert.equal(isCompletedLoopbackCallbackUrl('http://localhost:3000/callback?code=1&state=abc'), true);
+  assert.equal(isCompletedLoopbackCallbackUrl('http://localhost:3000/callback?error=access_denied'), true);
+  assert.equal(isCompletedLoopbackCallbackUrl('http://localhost:3000/callback'), false);
+  assert.equal(isCompletedLoopbackCallbackUrl('https://example.com/callback?code=1'), false);
+});
+
+test('findCompletedLoopbackCallbackUrl skips incomplete localhost urls', () => {
+  const result = findCompletedLoopbackCallbackUrl([
+    'http://localhost:3000/callback',
+    'https://example.com/callback?code=1',
+    'http://localhost:3000/callback?code=1&state=abc',
+  ]);
+
+  assert.equal(result, 'http://localhost:3000/callback?code=1&state=abc');
 });
 
 test('shouldUseStep8ContinueButton requires consent context and no blocking pages', () => {

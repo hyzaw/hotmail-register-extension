@@ -40,6 +40,27 @@ export function findLoopbackCallbackUrl(candidates = []) {
   return null;
 }
 
+export function isCompletedLoopbackCallbackUrl(url) {
+  const parsed = parseUrl(url);
+  if (!parsed || !isLoopbackCallbackUrl(url)) {
+    return false;
+  }
+
+  return parsed.searchParams.has('code')
+    || parsed.searchParams.has('error')
+    || parsed.searchParams.has('state');
+}
+
+export function findCompletedLoopbackCallbackUrl(candidates = []) {
+  for (const candidate of candidates) {
+    if (isCompletedLoopbackCallbackUrl(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function findMatchingText(candidates = [], pattern) {
   for (const candidate of candidates) {
     const normalized = normalizeInlineText(candidate);
@@ -280,6 +301,7 @@ export function shouldUseStep8ContinueButton(state = {}) {
 }
 
 export const oauthStepHelpers = {
+  findCompletedLoopbackCallbackUrl,
   findLoopbackCallbackUrl,
   findStep9SuccessText,
   findStep9TimeoutText,
@@ -292,6 +314,7 @@ export const oauthStepHelpers = {
   isDefinitiveSignupUrl,
   isLoginFlowUrl,
   isSignupFlowUrl,
+  isCompletedLoopbackCallbackUrl,
   isLoginPasswordPageText,
   isLoopbackCallbackUrl,
   isOAuthConsentUrl,

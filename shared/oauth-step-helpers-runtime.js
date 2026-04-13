@@ -41,6 +41,27 @@
     return null;
   }
 
+  function isCompletedLoopbackCallbackUrl(url) {
+    const parsed = parseUrl(url);
+    if (!parsed || !isLoopbackCallbackUrl(url)) {
+      return false;
+    }
+
+    return parsed.searchParams.has('code')
+      || parsed.searchParams.has('error')
+      || parsed.searchParams.has('state');
+  }
+
+  function findCompletedLoopbackCallbackUrl(candidates = []) {
+    for (const candidate of candidates) {
+      if (isCompletedLoopbackCallbackUrl(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
   function findMatchingText(candidates = [], pattern) {
     for (const candidate of candidates) {
       const normalized = normalizeInlineText(candidate);
@@ -281,6 +302,7 @@
   }
 
   globalScope.HotmailRegisterOAuthHelpers = {
+    findCompletedLoopbackCallbackUrl,
     findLoopbackCallbackUrl,
     findStep9SuccessText,
     findStep9TimeoutText,
@@ -291,6 +313,7 @@
     isExistingAccountSignalText,
     isExplicitSignupFlowPageText,
     isDefinitiveSignupUrl,
+    isCompletedLoopbackCallbackUrl,
     isLoginFlowUrl,
     isSignupFlowUrl,
     isLoginPasswordPageText,
