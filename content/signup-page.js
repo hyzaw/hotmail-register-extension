@@ -38,7 +38,7 @@ function getPageTextSnapshot() {
 const ONE_TIME_CODE_LOGIN_PATTERN = /使用一次性验证码登录|改用(?:一次性)?验证码(?:登录)?|使用验证码登录|一次性验证码|验证码登录|one[-\s]*time\s*(?:passcode|password|code)|use\s+(?:a\s+)?one[-\s]*time\s*(?:passcode|password|code)(?:\s+instead)?|use\s+(?:a\s+)?code(?:\s+instead)?|sign\s+in\s+with\s+(?:email|code)|email\s+(?:me\s+)?(?:a\s+)?code/i;
 const VERIFICATION_PAGE_PATTERN = /检查您的收件箱|输入我们刚刚向|重新发送电子邮件|重新发送验证码|验证码|代码不正确|email\s+verification/i;
 const VERIFICATION_CODE_ERROR_PATTERN = /代码不正确|验证码不正确|incorrect\s+code|invalid\s+code|code\s+is\s+incorrect|code\s+is\s+invalid/i;
-const ADD_PHONE_PAGE_PATTERN = /add[\s-]*phone|添加手机号|手机号码|手机号|phone\s+number|telephone/i;
+const ADD_PHONE_PAGE_PATTERN = /add[\s-]*phone|添加手机号|添加电话号码|手机号码|手机号|电话号码|phone\s+number|telephone/i;
 const OAUTH_CONSENT_PAGE_PATTERN = /使用\s*ChatGPT\s*登录到|login\s+to|log\s+in\s+to|authorize|授权/i;
 const SIGNUP_PASSWORD_RULE_PATTERN = /at\s+least\s+12\s+characters|your\s+password\s+must\s+contain|password\s+must\s+contain|至少\s*12\s*个字符|密码必须包含/i;
 const STEP5_SUBMIT_ERROR_PATTERN = /无法根据该信息创建帐户|请重试|unable\s+to\s+create\s+(?:your\s+)?account|couldn'?t\s+create\s+(?:your\s+)?account|something\s+went\s+wrong|invalid\s+(?:birthday|birth|date)|生日|出生日期|年龄|age/i;
@@ -101,8 +101,12 @@ function isLoginVerificationStageReady() {
 }
 
 function isAddPhonePageReady() {
+  const url = location.href || '';
+  if (/\/add-phone(?:[/?#]|$)/i.test(url)) {
+    return true;
+  }
   const phoneInput = document.querySelector(
-    'input[type="tel"]:not([maxlength="6"]), input[name*="phone" i], input[id*="phone" i], input[autocomplete="tel"]'
+    'input[type="tel"]:not([maxlength="6"]), input[inputmode="tel"], input[name*="phone" i], input[id*="phone" i], input[autocomplete="tel"], input[placeholder*="电话"], input[aria-label*="电话"]'
   );
   if (phoneInput && isVisibleElement(phoneInput)) {
     return true;
