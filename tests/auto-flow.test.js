@@ -869,6 +869,7 @@ test('runSingleAutoFlow abandons account when step 7 lands on add-phone after OT
         calls.push(`executeSignupStep:${step}`);
         if (step === 3) return { skipSignupVerification: true };
         if (step === 6) return { needsOTP: true };
+        if (step === 8) return { addPhoneRequired: true };
       },
       async pollVerificationCode(phase) {
         calls.push(`pollVerificationCode:${phase}`);
@@ -891,7 +892,6 @@ test('runSingleAutoFlow abandons account when step 7 lands on add-phone after OT
 
   assert.equal(result.status, 'completed');
   assert.equal(calls.includes('executeFinalVerifyStep'), false);
-  assert.equal(calls.includes('executeSignupStep:8'), false);
   assert.deepEqual(calls, [
     'prepareNextAccount',
     'log:单轮自动流程开始',
@@ -907,7 +907,8 @@ test('runSingleAutoFlow abandons account when step 7 lands on add-phone after OT
     'executeSignupStep:6',
     'pollVerificationCode:login',
     'fillLastCode:login',
-    'log:步骤 7：检测到需要添加电话号码，当前账号将放弃并标记为已注册。',
+    'executeSignupStep:8',
+    'log:步骤 8：检测到需要添加电话号码，当前账号将放弃并标记为已注册。',
     'completeCurrentAccount',
     'log:单轮自动流程完成，当前邮箱已标记为已使用',
   ]);
@@ -1093,6 +1094,78 @@ test('runSingleAutoFlow skips remaining signup steps when signup verification al
     'log:检测到页面已提前进入 OAuth 授权页，直接进入步骤 8。',
     'executeSignupStep:8',
     'executeFinalVerifyStep',
+    'completeCurrentAccount',
+    'log:单轮自动流程完成，当前邮箱已标记为已使用',
+  ]);
+});
+
+test('runSingleAutoFlow proceeds to step 6 when step 4 detects add-phone (do not abandon until step 8)', async () => {
+  const calls = [];
+
+  const result = await runSingleAutoFlow({
+    actions: {
+      async prepareNextAccount() {
+        calls.push('prepareNextAccount');
+      },
+      async refreshOauthFromVps() {
+        calls.push('refreshOauthFromVps');
+      },
+      async findCurrentEmailRecord() {
+        calls.push('findCurrentEmailRecord');
+      },
+      async openOauthUrl() {
+        calls.push('openOauthUrl');
+      },
+      async executeSignupStep(step) {
+        calls.push(`executeSignupStep:${step}`);
+        if (step === 6) {
+          return { needsOTP: false };
+        }
+        if (step === 8) {
+          return { addPhoneRequired: true };
+        }
+      },
+      async pollVerificationCode(phase) {
+        calls.push(`pollVerificationCode:${phase}`);
+        if (phase === 'signup') {
+          return { addPhoneRequired: true };
+        }
+      },
+      async fillLastCode(phase) {
+        calls.push(`fillLastCode:${phase}`);
+      },
+      async executeFinalVerifyStep() {
+        calls.push('executeFinalVerifyStep');
+      },
+      async completeCurrentAccount() {
+        calls.push('completeCurrentAccount');
+        return { status: 'completed' };
+      },
+      async addLog(message) {
+        calls.push(`log:${message}`);
+      },
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  // Step 5 should be skipped, and the flow should still attempt OAuth login (step 6),
+  // then let step 8 decide abandonment.
+  assert.deepEqual(calls, [
+    'prepareNextAccount',
+    'log:单轮自动流程开始',
+    'log:阶段 1：刷新 CPA 并重新获取 OAuth 链接',
+    'refreshOauthFromVps',
+    'findCurrentEmailRecord',
+    'log:阶段 2：打开认证页面并进入注册流程',
+    'openOauthUrl',
+    'executeSignupStep:2',
+    'executeSignupStep:3',
+    'pollVerificationCode:signup',
+    'log:步骤 4：检测到进入 add-phone（代表已填过资料），跳过步骤 5，直接进入步骤 6 继续 OAuth 登录流程。',
+    'executeSignupStep:6',
+    'log:步骤 6：已通过密码登录，跳过登录验证码阶段',
+    'executeSignupStep:8',
+    'log:步骤 8：检测到需要添加电话号码，当前账号将放弃并标记为已注册。',
     'completeCurrentAccount',
     'log:单轮自动流程完成，当前邮箱已标记为已使用',
   ]);

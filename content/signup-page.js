@@ -1426,6 +1426,11 @@ async function fillCode(payload) {
     await pauseForInteraction('afterPrimarySubmit');
   }
   const outcome = await waitForCodeSubmitOutcome(payload.step);
+  // Some signup variants redirect to add-phone right after verifying the signup code.
+  // Treat it as "profile already completed" so the background can proceed directly to OAuth login (step 6).
+  if (payload.step === 4 && isAddPhonePageReady()) {
+    return { ok: true, addPhoneRequired: true, url: location.href };
+  }
   if (payload.step === 7 && isAddPhonePageReady()) {
     return { ok: true, addPhoneRequired: true, url: location.href };
   }
