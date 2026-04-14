@@ -1,4 +1,4 @@
-import { isAutoRunPausedError } from './auto-run-control.js';
+import { isAutoRunCooldownError, isAutoRunPausedError } from './auto-run-control.js';
 
 const STEP_TITLES = Object.freeze({
   1: '获取 OAuth 链接',
@@ -928,6 +928,7 @@ export async function runAutoFlowBatch({
   runFlow,
   onAttemptError = async () => {},
   onPaused = async () => {},
+  onCooldown = async () => {},
 } = {}) {
   if (typeof runFlow !== 'function') {
     throw new Error('runAutoFlowBatch 需要 runFlow 函数');
@@ -952,6 +953,11 @@ export async function runAutoFlowBatch({
       if (isAutoRunPausedError(error)) {
         await onPaused(attempt, error);
         return { results, failures, pausedAt: attempt };
+      }
+      if (isAutoRunCooldownError(error)) {
+        const resumeIndex = Number.isFinite(error.resumeIndex) ? Math.max(0, Math.min(totalRuns, error.resumeIndex)) : attempt;
+        await onCooldown(resumeIndex, error);
+        return { results, failures, pausedAt: resumeIndex, cooledDown: true };
       }
 
       consecutiveErrors += 1;

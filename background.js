@@ -7,7 +7,7 @@ import {
   summarizeAccountAvailability,
 } from './shared/account-ledger.js';
 import { continueSingleAutoFlow, runAutoFlowBatch, runSingleAutoFlowWithAutoRetry } from './shared/auto-flow.js';
-import { createAutoRunPausedError } from './shared/auto-run-control.js';
+import { createAutoRunCooldownError, createAutoRunPausedError } from './shared/auto-run-control.js';
 import { buildAutoRestartRuntimeUpdates } from './shared/auto-restart.js';
 import { getAuthBrowsingDataOptions, getAuthBrowsingDataRemovals } from './shared/auth-browsing-data.js';
 import { getConsumedMessageIds, markVerificationMailConsumed } from './shared/consumed-mail-ledger.js';
@@ -212,6 +212,8 @@ function hasLoggedError(error) {
   return Boolean(error && typeof error === 'object' && error.__hotmailRegisterLogged);
 }
 
+const AUTO_COOLDOWN_ALARM = 'AUTO_FLOW_COOLDOWN_RESUME';
+
 function findProblemStep(stepStatuses = {}) {
   for (const status of ['failed', 'running']) {
     for (let step = 1; step <= 9; step += 1) {
@@ -230,6 +232,26 @@ async function ensureAutoFlowActive() {
   }
 }
 
+async function scheduleCooldownResume({ resumeAt, resumeRun, totalRuns } = {}) {
+  if (!chrome.alarms?.create) {
+    throw new Error('当前浏览器不支持 alarms API，无法可靠执行 10 分钟冷却自动恢复。');
+  }
+  const when = Math.max(Date.now() + 5000, Number(resumeAt) || 0);
+  await chrome.alarms.clear(AUTO_COOLDOWN_ALARM).catch(() => {});
+  chrome.alarms.create(AUTO_COOLDOWN_ALARM, { when });
+  await setRuntime({
+    autoRunning: false,
+    autoPaused: true,
+    autoCooldownActive: true,
+    autoCooldownUntil: when,
+    autoCooldownReason: 'add_phone',
+    stopRequested: false,
+    autoCurrentRun: Math.max(1, Number(resumeRun) || 1),
+    autoTotalRuns: Math.max(1, Number(totalRuns) || 1),
+    pendingAutoAction: '',
+  });
+}
+
 async function sleepWithAutoFlowControl(ms, intervalMs = 500) {
   const totalMs = Math.max(0, Number(ms) || 0);
   if (!totalMs) return;
@@ -241,6 +263,21 @@ async function sleepWithAutoFlowControl(ms, intervalMs = 500) {
     const remaining = totalMs - (Date.now() - startedAt);
     await new Promise((resolve) => setTimeout(resolve, Math.min(tickMs, remaining)));
   }
+}
+
+async function maybeResumeAfterCooldownAlarm() {
+  const state = await getState();
+  if (!state.autoCooldownActive || !state.autoPaused) {
+    return;
+  }
+  if (state.stopRequested) {
+    // User manually paused; do not auto-resume.
+    await setRuntime({ autoCooldownActive: false });
+    await addLog('检测到手动暂停请求，已取消 add-phone 冷却自动恢复。', 'warn');
+    return;
+  }
+  await addLog('add-phone 冷却结束，继续自动流程...', 'info');
+  await runAutoFlow({ resume: true });
 }
 
 async function runManagedStep(step, action, messages = {}) {
@@ -950,6 +987,9 @@ async function runAutoFlow({ resume = false } = {}) {
   await setRuntime({
     autoRunning: true,
     autoPaused: false,
+    autoCooldownActive: false,
+    autoCooldownUntil: 0,
+    autoCooldownReason: '',
     stopRequested: false,
     autoCurrentRun: startIndex + 1,
     autoTotalRuns: totalRuns,
@@ -999,13 +1039,9 @@ async function runAutoFlow({ resume = false } = {}) {
 
         // Requirement: if OAuth flow hits add-phone twice in a row, rest 10 minutes before continuing.
         if (consecutiveAddPhone >= 2 && attempt + 1 < totalRuns) {
-          await ensureAutoFlowActive();
-          const latestState = await getState();
-          const address = latestState.currentAccount?.address ? `（${latestState.currentAccount.address}）` : '';
-          await addLog(`检测到连续 ${consecutiveAddPhone} 次出现 add-phone${address}，将暂停 10 分钟后继续。`, 'warn');
-          await sleepWithAutoFlowControl(10 * 60 * 1000);
-          consecutiveAddPhone = 0;
-          await setRuntime({ consecutiveAddPhoneCount: consecutiveAddPhone }).catch(() => {});
+          const nextAttempt = attempt + 1;
+          const cooldownMs = 10 * 60 * 1000;
+          throw createAutoRunCooldownError('add-phone 连续触发，进入 10 分钟冷却', { resumeIndex: nextAttempt, cooldownMs });
         }
 
         if (attempt + 1 < totalRuns) {
@@ -1034,10 +1070,30 @@ async function runAutoFlow({ resume = false } = {}) {
           await addLog('检测到流程错误，将自动重试（无需手动点击继续）。', 'warn');
         }
       },
+      onCooldown: async (resumeIndex, error) => {
+        const cooldownMs = Math.max(0, Number(error?.cooldownMs) || (10 * 60 * 1000));
+        const resumeRun = Math.max(1, Number(resumeIndex) + 1);
+        const latestState = await getState();
+        const address = latestState.currentAccount?.address ? `（${latestState.currentAccount.address}）` : '';
+        const resumeAt = Date.now() + cooldownMs;
+        const closedAuthTabs = await closeAuthTabs();
+        if (closedAuthTabs) {
+          await addLog(`已关闭 ${closedAuthTabs} 个 OpenAI 认证页标签`, 'info');
+        }
+        await setRuntime({ consecutiveAddPhoneCount: 0 }).catch(() => {});
+        await addLog(
+          `检测到 add-phone 连续触发${address}，将冷却 ${formatRetryDelay(cooldownMs)} 后自动继续第 ${resumeRun}/${totalRuns} 轮。`,
+          'warn',
+        );
+        await scheduleCooldownResume({ resumeAt, resumeRun, totalRuns });
+      },
       onPaused: async (resumeIndex) => {
         await setRuntime({
           autoRunning: false,
           autoPaused: true,
+          autoCooldownActive: false,
+          autoCooldownUntil: 0,
+          autoCooldownReason: '',
           stopRequested: false,
           autoCurrentRun: resumeIndex + 1,
           autoTotalRuns: totalRuns,
@@ -1273,6 +1329,12 @@ const handlers = {
   async PAUSE_AUTO_RUN() {
     const state = await getState();
     if (!state.autoRunning) {
+      if (state.autoPaused && state.autoCooldownActive && chrome.alarms?.clear) {
+        await chrome.alarms.clear(AUTO_COOLDOWN_ALARM).catch(() => {});
+        await setRuntime({ stopRequested: true, autoCooldownActive: false });
+        await addLog('已取消 add-phone 冷却自动恢复', 'warn');
+        return { paused: true, reason: 'cooldown_cancelled' };
+      }
       return { paused: false, reason: 'not_running' };
     }
     await setRuntime({ stopRequested: true });
@@ -1753,6 +1815,14 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 void configureSidePanelAction();
+
+if (chrome.alarms?.onAlarm?.addListener) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm?.name !== AUTO_COOLDOWN_ALARM) return;
+    // Fire-and-forget; alarm handler must not block.
+    void maybeResumeAfterCooldownAlarm().catch(() => null);
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'LOG') {
